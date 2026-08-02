@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /home/why/C/robot_linux_c_app/docs)"
+    ],
+    "additionalDirectories": [
+      "/home/why/C/robot_linux_c_app"
+    ]
+  }
+}
