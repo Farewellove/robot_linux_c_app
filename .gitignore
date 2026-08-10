@@ -1,0 +1,20 @@
+# Compiled binary
+robot_linux_app
+
+# Object files
+obj/
+*.o
+
+# Claude Code local settings
+.claude/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
