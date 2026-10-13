@@ -8,6 +8,8 @@
 > - **未实现**：断线自动重连、CRC/校验字段、应用层心跳、实时调度（`SCHED_FIFO`/PREEMPT_RT）。
 > - `SO_KEEPALIVE` 使用内核默认参数（约 7200 s），**不等于及时断线检测**。
 > - 当前所有性能数据来自 **PC loopback 模拟对端**，板端实测尚未进行（见 `performance_evaluation/`）。
+> - **真实传感器数据通路已实现**（`sensor_robot` 读板载 ICM20608 / AP3216C 的 IIO 节点），
+>   但目前只在**假 IIO 目录树**上做过离线端到端冒烟，**尚未在开发板真机上联调**。
 
 ---
 
@@ -18,24 +20,30 @@ robot_linux_c_app/
 ├── README.md                  ← 本文件：唯一入口（结构 / 构建 / 运行 / 协议）
 ├── Makefile                   ← 全部构建与测试入口
 │
-├── src/                       ← 生产代码（6 个 .c）
+├── src/                       ← 生产代码（9 个 .c）
 │   ├── main.c                   入口、双线程、信号、周期调度与打点
 │   ├── robot_protocol.c         20B 定长帧：组帧 / 解析 / 帧尾同步粘包状态机
 │   ├── robot_tcp.c              socket 封装：connect / 循环 send / recv / NODELAY / KEEPALIVE
 │   ├── logger.c                 CSV 日志（时间戳命名、逐帧落盘）
 │   ├── app_config.c             命令行参数默认值与打印
-│   └── metrics.c                周期指标采集（--benchmark 才启用，默认零开销）
-├── include/                   ← 对应头文件（5 个 .h）
+│   ├── metrics.c                周期指标采集（--benchmark 才启用，默认零开销）
+│   ├── iio_util.c               IIO sysfs 通用访问（按 name 定位设备 / 常驻 fd / pread 重读）
+│   ├── icm20608.c               ICM20608 六轴+温度读取（只取 int16 原始值）
+│   └── ap3216c.c                AP3216C ALS/PS/IR 读取
+├── include/                   ← 对应头文件（8 个 .h）
 │
-├── tests/                     ← 测试（不参与主程序链接）
-│   ├── test_protocol.c          协议状态机测试（16 类用例，直接编译生产源码）
-│   └── mock_robot.c             loopback 模拟机器人服务端（含下行帧校验）
+├── tests/                     ← 测试与对端程序（不参与主程序链接）
+│   ├── test_protocol.c          协议状态机测试（19 类用例，直接编译生产源码）
+│   ├── mock_robot.c             loopback 模拟机器人服务端（虚拟数据，含下行帧校验）
+│   └── sensor_robot.c           真实传感器服务端（读板载 ICM20608/AP3216C 推真实数据）
 │
-├── logs/                      ← 程序运行时的 CSV 日志输出目录（自动创建）
+├── log/                       ← 运行期日志根目录（自动创建，git 忽略）
+│   └── robot_linux_c_app/       ← 按项目分目录：robot_log_*.csv / 03_periodic_timing.csv /
+│                                  mock_server.csv / sensor_server.csv
 │
 ├── output/                    ← 构建产物（PC 与 ARM 两套，见下方"构建与部署"）
-│   ├── pc/                       PC  侧：mock_robot / robot_linux_app
-│   └── arm/                      ARM 侧：robot_linux_app / mock_robot
+│   ├── pc/                       PC  侧：mock_robot / sensor_robot / robot_linux_app
+│   └── arm/                      ARM 侧：robot_linux_app / mock_robot / sensor_robot
 │
 ├── performance_evaluation/    ← 性能量化交付物（文档 + 脚本 + 数据 + 日志）
 │   ├── README.md                索引
@@ -61,14 +69,37 @@ robot_linux_c_app/
 
 ```bash
 make                     # 同时编译 PC 与 ARM 两套
-make test                # 协议测试：16 类用例，应输出 16 passed, 0 failed
+make test                # 协议测试：19 类用例，应输出 19 passed, 0 failed
 
-# 终端 A：模拟设备端（对端）
+# 终端 A：模拟设备端（对端，虚拟数据）
 ./output/pc/mock_robot -b 127.0.0.1 -p 19090 --period 10
 
 # 终端 B：接收端，跑 1000 个周期（10 秒）后自动退出
 ./output/pc/robot_linux_app -i 127.0.0.1 -p 19090 -e 1 -m 1 --period 10 \
     --benchmark --cycles 1000 --metrics-csv /tmp/timing.csv
+```
+
+### 真实传感器数据（开发板）
+
+板端用 `sensor_robot` 替代 `mock_robot`，推的是 ICM20608 / AP3216C 的真实采样值：
+
+```bash
+# ① 开发板：加载驱动（IIO 依赖内核已开启 CONFIG_IIO）
+cd /lib/modules/4.1.15 && ./load_drivers.sh
+
+# ② 开发板：真实数据源，10ms 一帧 IMU、每 10 个周期一帧 AP3216C
+./sensor_robot -p 19090 --period 10 --imu-every 1 --ap-every 10 --print-every 100
+
+# ③ PC：接收端照原样跑，命令一个字都不用改
+./output/pc/robot_linux_app -i <开发板IP> -p 19090 -e 0 -m 0 --period 10
+```
+
+无硬件时也能自测这条链路 —— 造一棵假 IIO 目录树喂给 `--iio-root`：
+
+```bash
+mkdir -p /tmp/fake_iio/iio:device0 && echo icm20608 > /tmp/fake_iio/iio:device0/name
+# 再建 in_accel{0,1,2}_raw / in_anglvel{0,1,2}_raw / in_temp0_raw 等文件（各写一个整数）
+./output/pc/sensor_robot --iio-root /tmp/fake_iio -p 19090 --period 10 --frames 60
 ```
 
 完整流程（构建 / 日常验证 / 性能量化 / 板端 / 排查）见 **`performance_evaluation/USAGE.md`**。
@@ -81,10 +112,12 @@ make test                # 协议测试：16 类用例，应输出 16 passed, 0 
 
 | 产物 | 角色 | 运行位置 |
 |---|---|---|
-| `output/pc/mock_robot` | **模拟设备端**（对端，主动推送状态帧） | PC |
+| `output/pc/mock_robot` | **模拟设备端**（对端，推虚拟状态帧） | PC |
+| `output/arm/sensor_robot` | **真实传感器设备端**（读 ICM20608/AP3216C 推真实帧） | **开发板** |
 | `output/arm/robot_linux_app` | **接收端**（上位机，主用） | **开发板** |
 | `output/pc/robot_linux_app` | 接收端 | PC（本机自测） |
 | `output/arm/mock_robot` | 模拟设备端 | 开发板（反向拓扑时用） |
+| `output/pc/sensor_robot` | 真实传感器端 | PC（仅编译，配合 `--iio-root` 离线自测） |
 
 ```bash
 make                      # 默认：编译 PC + ARM 两套
@@ -117,9 +150,10 @@ bash performance_evaluation/scripts/board_bench_pc.sh 6000
 ```
 
 ```bash
-# ③ 开发板串口：跑板端脚本（记录环境 → 采集 60 秒 → CSV 落在 NFS 目录）
+# ③ 开发板串口：跑板端脚本（记录环境 → 采集 60 秒 → CSV 落在日志目录）
 cd /lib/modules/4.1.15
 ./board_bench_board.sh 192.168.1.66 6000
+# 产物：/lib/modules/4.1.15/log/robot_linux_c_app/{board_timing.csv,board_env_<时间>.txt}
 ```
 
 PC 侧脚本会自动完成：等连接 → 等采集结束 → 复算统计 → 归档 `results/board_periodic_timing_<时间>.csv`
@@ -131,13 +165,16 @@ PC 侧脚本会自动完成：等连接 → 等采集结束 → 复算统计 →
 # PC
 ./output/pc/mock_robot -p 19090 --period 10 --frames 1000000 --accept-timeout 300 \
     --csv performance_evaluation/results/board_mock_server.csv
-# 板端
+# 板端（产物同样进 log/robot_linux_c_app/）
 cd /lib/modules/4.1.15 && uname -a && nproc
+mkdir -p log/robot_linux_c_app
 ./robot_linux_app -i 192.168.1.66 -p 19090 -e 1 -m 1 --period 10 \
-    --benchmark --cycles 6000 --metrics-csv board_timing.csv
+    --benchmark --cycles 6000 \
+    --metrics-csv log/robot_linux_c_app/board_timing.csv
 # PC 复算（CSV 在 NFS 目录里，无需 scp）
 python3 performance_evaluation/scripts/analyze_timing.py \
-    /home/why/zdyz/nfs/rootfs/lib/modules/4.1.15/board_timing.csv --label imx6ull
+    /home/why/zdyz/nfs/rootfs/lib/modules/4.1.15/log/robot_linux_c_app/board_timing.csv \
+    --label imx6ull
 ```
 
 > `mock_robot` 默认绑定 `0.0.0.0`（跨机必需）；仅本机自测时用 `-b 127.0.0.1` 收紧监听范围。
@@ -170,9 +207,10 @@ python3 performance_evaluation/scripts/analyze_timing.py \
 | `--vx / --vy / --vz <val>` | 速度分量（int8） | 0 |
 | `--period <ms>` | 控制帧发送周期 | 10 |
 | `--benchmark` | 采集每周期调度指标（唤醒延迟/工作耗时/周期偏差） | 关闭 |
-| `--metrics-csv <path>` | 指标 CSV 输出路径 | `performance_evaluation/results/03_periodic_timing.csv` |
+| `--metrics-csv <path>` | 指标 CSV 输出路径 | `log/robot_linux_c_app/03_periodic_timing.csv` |
 | `--cycles <n>` | 跑满 n 个周期后退出（0 = 不限制） | 0 |
 | `--abs-timer` | 改用绝对时间定时（`TIMER_ABSTIME`） | 关闭 |
+| `--log-dir <path>` | CSV 日志输出目录 | `log/robot_linux_c_app` |
 | `-h` | 显示帮助 | - |
 
 > `--benchmark` 关闭时（默认）**不产生任何额外系统调用**，不影响原有通信行为。
@@ -202,7 +240,8 @@ buf[19] = 0x0A        帧尾
 ### 状态回传帧（机器人 → 上位机）
 
 **帧尾标志**：`buf[18] == 0x55 && buf[19] == 0x56` 判定为合法帧。
-`buf[0]` 用于分派帧类型：`'u'` = UWB 定位帧，`'c'` = 车体状态帧。
+`buf[0]` 用于分派帧类型：`'u'` = UWB 定位帧，`'c'` = 车体状态帧，
+`'i'` = IMU 帧（ICM20608），`'a'` = AP3216C 帧。
 
 **UWB 定位帧**（`buf[0] == 'u'`，`buf[1] == 'p'`）：
 
@@ -227,6 +266,36 @@ buf[14..15] roll_raw (int16)    roll  = raw / 32768 * 180
 buf[16..17] pitch_raw (int16)   pitch = raw / 32768 * 180
 ```
 
+**IMU 帧**（`buf[0] == 'i'`，ICM20608 真实采样，板端 `sensor_robot` 推送）：
+
+```
+buf[1]      0x00        保留
+buf[2..3]   accel_x (int16)   accel = raw / 2048.0   → g    （±16g 量程）
+buf[4..5]   accel_y (int16)
+buf[6..7]   accel_z (int16)
+buf[8..9]   gyro_x  (int16)   gyro  = raw / 16.4     → °/s  （±2000°/s 量程）
+buf[10..11] gyro_y  (int16)
+buf[12..13] gyro_z  (int16)
+buf[14..15] temp    (int16)   temp  = raw / 326.8 + 25 → ℃
+buf[16..17] seq (uint16)      帧序号，溢出回绕
+```
+
+线上只传 int16 原始值，物理量在解析侧换算（`imu_raw_to_physical()`），
+换算系数即协议的一部分，收发两侧共用同一份宏定义，避免两处漂移。
+
+**AP3216C 帧**（`buf[0] == 'a'`，环境光 / 接近 / 红外）：
+
+```
+buf[1]      0x00        保留
+buf[2..3]   als (int16)  环境光原始计数
+buf[4..5]   ps  (int16)  接近检测原始计数
+buf[6..7]   ir  (int16)  红外原始计数
+buf[8..15]  0x00        保留
+buf[16..17] seq (uint16) 帧序号
+```
+
+板端该驱动的 `scale` 当前恒为 1，故原始计数即显示值；协议不写死换算系数。
+
 ### TCP 粘包 / 半包处理
 
 接收缓存 + **帧尾同步**滑动窗口状态机（`recv_buffer_feed`）：
@@ -250,25 +319,55 @@ buf[16..17] pitch_raw (int16)   pitch = raw / 32768 * 180
 
 ## 日志格式
 
-程序日志保存到 `logs/robot_log_YYYYMMDD_HHMMSS.csv`，含两行表头：
+## 日志目录规范
+
+运行期产生的所有 CSV / txt **一律落在 `log/<项目名>/` 下**，不许散落在工作目录里
+（板端 `/lib/modules/4.1.15/` 是多个项目共用的工作目录，散落会互相污染）：
+
+```
+log/                              ← 日志根（相对当前工作目录）
+└── robot_linux_c_app/            ← 本项目一层；其它项目各自一个目录
+    ├── robot_log_20261013_220849.csv    上位机逐帧日志（UWB/CAR/IMU/AP）
+    ├── 03_periodic_timing.csv           --benchmark 的逐周期调度指标
+    ├── mock_server.csv                  mock_robot 的校验统计
+    └── sensor_server.csv                sensor_robot 的采样/发送统计
+
+# 板端（cwd = /lib/modules/4.1.15）即为：
+/lib/modules/4.1.15/log/robot_linux_c_app/
+```
+
+覆盖方式（后者优先）：默认值 < 环境变量 `ROBOT_LOG_ROOT` < `--log-dir`。
+板端脚本同样遵守：环境变量 `ROBOT_LOG_ROOT` / `BOARD_LOG_DIR` 可改。
+
+> 区分两类产物：
+> **运行期日志** → `log/<项目名>/`（随手可删，`make clean-logs` 清掉）；
+> **量化交付物**（脚本归档的 CSV / 报告）→ PC 侧留在 `performance_evaluation/{results,logs}/`，
+> 属于仓库内的证据，不随运行清理。
+
+程序日志保存到 `log/robot_linux_c_app/robot_log_YYYYMMDD_HHMMSS.csv`，含四行表头：
 
 ```csv
 timestamp,tag_num,x,y,z
 timestamp,vx,vy,vz,weld_state,d_angle,d_dis,yaw,roll,pitch
+timestamp,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,temp
+timestamp,als,ps,ir
 1703001234.123456,1,1.234,2.345,0.000
 1703001234.234567,0.00,0.00,0.00,0,0.00,0.0000,0.00,0.00,0.00
+1703001234.245678,0.0000,0.5000,1.0000,10.000,-10.000,0.000,26.00
+1703001234.255678,1234,56,789
 ```
 
 - 时间戳来自 `clock_gettime(CLOCK_REALTIME)`，微秒级有效精度；
 - 每帧写入后 `fflush`，被强杀时已写数据不丢（代价是刷盘频繁）；
-- 按列数区分 UWB（5 列）与 CAR（10 列）记录。
+- 按列数区分 UWB（5 列）、CAR（10 列）、IMU（8 列）、AP（4 列）记录。
 
 ---
 
 ## 测试与测量
 
 ```bash
-make test                                  # 协议状态机 16 类用例
+make test                                  # 协议状态机 19 类用例（含 IMU/AP 新帧）
+make clean-logs                            # 只清 log/<项目名>/ 下的运行期日志
 make test-asan                             # ASan + UBSan + 泄漏检测
 make cross-check                           # ARM 交叉编译可用性检查
 

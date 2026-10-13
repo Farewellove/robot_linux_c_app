@@ -36,6 +36,8 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
+#include "app_config.h"   /* DEFAULT_LOG_DIR：与其它程序共用同一套日志目录约定 */
+
 #define CTRL_FRAME_LEN 20
 #define STAT_FRAME_LEN 20
 
@@ -43,25 +45,41 @@ static volatile sig_atomic_t g_stop = 0;
 
 static void on_sig(int s) { (void)s; g_stop = 1; }
 
+/* 递归创建目录（等价 mkdir -p）：日志目录是 log/<项目名>/ 这种多层结构 */
 static int ensure_parent_dir(const char *path)
 {
     char tmp[512];
     size_t len = strlen(path);
     if (len == 0 || len >= sizeof(tmp)) return -1;
     memcpy(tmp, path, len + 1);
+
     char *slash = strrchr(tmp, '/');
     if (!slash || slash == tmp) return 0;
     *slash = '\0';
+    len = strlen(tmp);
 
-    /* 目录已存在时必须视为成功：mkdir() 对已存在目录返回 -1/EEXIST */
+    for (size_t i = 1; i < len; i++) {
+        if (tmp[i] != '/') continue;
+
+        char saved = tmp[i];
+        tmp[i] = '\0';
+
+        struct stat st;
+        if (stat(tmp, &st) != 0) {
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+                tmp[i] = saved;
+                return -1;
+            }
+        } else if (!S_ISDIR(st.st_mode)) {
+            tmp[i] = saved;
+            return -1;
+        }
+        tmp[i] = saved;
+    }
+
     struct stat st;
-    if (stat(tmp, &st) == 0) {
-        return S_ISDIR(st.st_mode) ? 0 : -1;
-    }
-    if (mkdir(tmp, 0755) == 0 || errno == EEXIST) {
-        return 0;
-    }
-    return -1;
+    if (stat(tmp, &st) == 0) return S_ISDIR(st.st_mode) ? 0 : -1;
+    return mkdir(tmp, 0755);
 }
 
 static void put_i32(uint8_t *p, int32_t v) { memcpy(p, &v, 4); }
@@ -104,7 +122,7 @@ int main(int argc, char *argv[])
     long close_after = 0;
     int use_rst = 0;
     int accept_timeout_s = 20;
-    const char *csv_path = "performance_evaluation/results/03_mock_server.csv";
+    const char *csv_path = DEFAULT_LOG_DIR "/mock_server.csv";
 
     /*
      * 绑定地址：默认 0.0.0.0，这样开发板能通过网络连进来（跨机测试必需）。

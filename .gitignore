@@ -14,9 +14,11 @@ test_protocol_asan
 obj/
 *.o
 
-# Runtime CSV logs written by the application
-# 只忽略仓库根目录的 logs/（程序运行时输出）；
-# 不能写成 logs/ —— 那会连带忽略 performance_evaluation/logs/
+# Runtime logs written by the application.
+# 运行期日志统一在 log/<项目名>/ 下（见 include/app_config.h 的 LOG_ROOT/PROJECT_NAME）。
+# 只忽略仓库根目录的 log/ 与旧位置 logs/，不能写成 log/ 或 logs/ —— 那会连带忽略
+# performance_evaluation/logs/ 等目录。
+/log/
 /logs/
 
 # Claude Code local settings

@@ -5,6 +5,7 @@
  */
 #include "app_config.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -28,6 +29,17 @@ void app_config_set_defaults(AppConfig *cfg)
     cfg->abs_timer  = 0;
     cfg->max_cycles = 0;
     strncpy(cfg->metrics_csv, DEFAULT_METRICS_CSV, sizeof(cfg->metrics_csv) - 1);
+
+    /*
+     * 日志目录：环境变量 ROBOT_LOG_ROOT 可整体换根（如板端指向别的挂载点），
+     * 但项目名这一层始终保留，保证不同项目的日志不会混在一个目录里。
+     */
+    const char *root = getenv("ROBOT_LOG_ROOT");
+    if (root && root[0] != '\0') {
+        snprintf(cfg->log_dir, sizeof(cfg->log_dir), "%s/%s", root, PROJECT_NAME);
+    } else {
+        snprintf(cfg->log_dir, sizeof(cfg->log_dir), "%s", DEFAULT_LOG_DIR);
+    }
 }
 
 /* 打印最终生效的参数，方便确认命令行是否被正确解析 */
@@ -44,6 +56,7 @@ void app_config_print(const AppConfig *cfg)
     printf("  Vy         : %d\n", cfg->vy);
     printf("  Vz         : %d\n", cfg->vz);
     printf("  Period     : %d ms\n", cfg->send_period_ms);
+    printf("  Log dir    : %s\n", cfg->log_dir);
     printf("  Benchmark  : %s\n", cfg->benchmark ? "on" : "off");
     if (cfg->benchmark) {
         printf("  Timer mode : %s\n", cfg->abs_timer ? "absolute (TIMER_ABSTIME)"

@@ -14,6 +14,7 @@
 #   ACCEPT_TIMEOUT  等待开发板连接的秒数，默认 300
 #   NFS_DIR         NFS 根文件系统路径，默认 /home/why/zdyz/nfs/rootfs
 #   CSV_NAME        板端写入的指标 CSV 文件名，默认 board_timing.csv
+#   BOARD_LOG_DIR   板端日志目录（相对板端工作目录），默认 log/robot_linux_c_app
 #
 # 执行前请确认: 已在另一终端（或稍后）于板端运行 board_bench_board.sh。
 # 本脚本会先打印板端需要执行的命令，然后开始等待连接。
@@ -29,8 +30,12 @@ ACCEPT_TIMEOUT="${ACCEPT_TIMEOUT:-300}"
 NFS_DIR="${NFS_DIR:-/home/why/zdyz/nfs/rootfs}"
 BOARD_DIR_REL="lib/modules/4.1.15"
 BOARD_DIR="$NFS_DIR/$BOARD_DIR_REL"
+
+# 板端所有产物都写在 log/<项目名>/ 下（见 board_bench_board.sh），这里按同一约定取
+BOARD_LOG_REL="${BOARD_LOG_DIR:-log/robot_linux_c_app}"
+BOARD_LOG_DIR_ABS="$BOARD_DIR/$BOARD_LOG_REL"
 CSV_NAME="${CSV_NAME:-board_timing.csv}"
-BOARD_CSV="$BOARD_DIR/$CSV_NAME"
+BOARD_CSV="$BOARD_LOG_DIR_ABS/$CSV_NAME"
 
 PC_BIN="output/pc"
 MOCK_BIN="$PC_BIN/mock_robot"
@@ -81,6 +86,7 @@ echo "   PERIOD        = ${PERIOD_MS} ms"
 echo "   CYCLES        = $CYCLES  (约 $((CYCLES * PERIOD_MS / 1000)) 秒)"
 echo "   等待连接超时   = ${ACCEPT_TIMEOUT} 秒"
 echo "   板端工作目录   = $BOARD_DIR"
+echo "   板端日志目录   = $BOARD_LOG_DIR_ABS"
 echo "=================================================================="
 echo
 echo ">>> 现在请在【开发板串口】执行以下命令:"
@@ -169,7 +175,7 @@ cp -f "$BOARD_CSV" "$TIMING_ARCHIVE"
 echo "已归档       : $TIMING_ARCHIVE"
 
 # 板端环境记录
-ENV_LATEST="$(ls -t "$BOARD_DIR"/board_env_*.txt 2>/dev/null | head -1)"
+ENV_LATEST="$(ls -t "$BOARD_LOG_DIR_ABS"/board_env_*.txt 2>/dev/null | head -1)"
 if [ -n "$ENV_LATEST" ]; then
     cp -f "$ENV_LATEST" "$RES_DIR/board_env_${TS}.txt"
     echo "板端环境记录 : $RES_DIR/board_env_${TS}.txt"

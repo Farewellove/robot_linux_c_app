@@ -11,11 +11,26 @@
  * 修改协议帧长时两处都要同步改，否则会出现"缓冲区大小对不上"的问题 */
 #define CONTROL_FRAME_LEN     20
 #define STATUS_FRAME_LEN      20
-#define LOG_DIR               "logs"   /* CSV 日志输出目录 */
 #define RECV_BUF_SIZE         4096     /* 单次 recv 的暂存区大小 */
 
+/*
+ * 运行期日志统一放在 <LOG_ROOT>/<项目名>/ 下，不许散落在工作目录里。
+ *
+ * LOG_ROOT 相对当前工作目录：
+ *   板端  从 /lib/modules/4.1.15 启动  → /lib/modules/4.1.15/log/robot_linux_c_app/
+ *   PC    从仓库根目录启动            → ./log/robot_linux_c_app/
+ *
+ * 覆盖顺序（后者优先）：本文件默认值 < 环境变量 ROBOT_LOG_ROOT < --log-dir。
+ */
+#define LOG_ROOT              "log"
+#define PROJECT_NAME          "robot_linux_c_app"
+#define LOG_DIR               LOG_ROOT "/" PROJECT_NAME
+
+/* CSV 日志输出目录（--log-dir 可覆盖） */
+#define DEFAULT_LOG_DIR       LOG_DIR
+
 /* 周期指标 CSV 默认输出路径（--benchmark 打开且未指定 --metrics-csv 时使用） */
-#define DEFAULT_METRICS_CSV   "performance_evaluation/results/03_periodic_timing.csv"
+#define DEFAULT_METRICS_CSV   LOG_DIR "/03_periodic_timing.csv"
 
 /* 运行期配置：先填默认值，再被命令行参数覆盖 */
 typedef struct {
@@ -33,6 +48,7 @@ typedef struct {
     int  abs_timer;        /* 1 = 绝对时间定时 TIMER_ABSTIME（--abs-timer） */
     int  max_cycles;       /* >0 = 跑满该周期数后退出；0 = 不限制（--cycles） */
     char metrics_csv[256]; /* 指标 CSV 输出路径（--metrics-csv） */
+    char log_dir[256];     /* CSV 日志输出目录（--log-dir） */
 } AppConfig;
 
 /* 填默认值（会先 memset 清零） */

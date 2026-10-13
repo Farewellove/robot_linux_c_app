@@ -95,6 +95,27 @@ static void on_parsed_frame(const ParsedFrame *frame)
                          frame->data.car.roll,
                          frame->data.car.pitch);
         break;
+    case FRAME_TYPE_IMU:
+        printf("[IMU] ax=%+.3f ay=%+.3f az=%+.3f g | gx=%+.2f gy=%+.2f gz=%+.2f deg/s | "
+               "temp=%.2f C | seq=%u\n",
+               frame->data.imu.accel_g[0],
+               frame->data.imu.accel_g[1],
+               frame->data.imu.accel_g[2],
+               frame->data.imu.gyro_dps[0],
+               frame->data.imu.gyro_dps[1],
+               frame->data.imu.gyro_dps[2],
+               frame->data.imu.temp_c,
+               frame->data.imu.seq);
+        logger_write_imu(g_log_fp, ts, &frame->data.imu);
+        break;
+    case FRAME_TYPE_AP:
+        printf("[AP ] als=%d ps=%d ir=%d | seq=%u\n",
+               frame->data.ap.als,
+               frame->data.ap.ps,
+               frame->data.ap.ir,
+               frame->data.ap.seq);
+        logger_write_ap(g_log_fp, ts, &frame->data.ap);
+        break;
     default:
         break;
     }
@@ -282,6 +303,7 @@ static void print_usage(const char *prog)
     printf("  --metrics-csv <path>  Metrics CSV output (default: %s)\n", DEFAULT_METRICS_CSV);
     printf("  --cycles <n>  Exit after n send cycles, 0 = unlimited (default: 0)\n");
     printf("  --abs-timer   Use absolute CLOCK_MONOTONIC deadline instead of relative sleep\n");
+    printf("  --log-dir <path>  CSV log output directory (default: %s)\n", DEFAULT_LOG_DIR);
     printf("  -h            Show this help\n");
 }
 
@@ -304,6 +326,7 @@ int main(int argc, char *argv[])
         {"metrics-csv", required_argument, 0, 0},
         {"cycles",      required_argument, 0, 0},
         {"abs-timer",   no_argument,       0, 0},
+        {"log-dir",     required_argument, 0, 0},
         {0, 0, 0, 0}
     };
 
@@ -343,6 +366,8 @@ int main(int argc, char *argv[])
                 strncpy(cfg.metrics_csv, optarg, sizeof(cfg.metrics_csv) - 1);
             } else if (strcmp(long_opts[long_idx].name, "cycles") == 0) {
                 cfg.max_cycles = atoi(optarg);
+            } else if (strcmp(long_opts[long_idx].name, "log-dir") == 0) {
+                strncpy(cfg.log_dir, optarg, sizeof(cfg.log_dir) - 1);
             }
             break;
         case 'h':
@@ -391,7 +416,7 @@ int main(int argc, char *argv[])
     }
 
     /* 日志打不开不算致命错误，降级为只打印到控制台继续跑 */
-    g_log_fp = logger_open(LOG_DIR, "robot_log");
+    g_log_fp = logger_open(cfg.log_dir, "robot_log");
     if (!g_log_fp) {
         fprintf(stderr, "Warning: logging disabled.\n");
     }

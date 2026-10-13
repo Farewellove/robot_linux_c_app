@@ -1,0 +1,11 @@
+metric,value
+listen_port,19090
+status_period_ms,10
+tx_status_frames,4845
+rx_ctrl_frames,4741
+rx_bad_ctrl_frames,0
+rx_seq_gaps,0
+first_ctrl_seq,0
+silent_mode,0
+close_after,0
+rst_close,0
