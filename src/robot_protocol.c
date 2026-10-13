@@ -65,8 +65,18 @@ int recv_buffer_feed(RecvBuffer *rb, const uint8_t *data, size_t len,
                         pf.type = FRAME_TYPE_CAR;
                         on_frame(&pf);
                     }
+                } else if (rb->buf[0] == 'i') {
+                    if (parse_imu_frame(rb->buf, STATUS_FRAME_LEN, &pf.data.imu) == 0) {
+                        pf.type = FRAME_TYPE_IMU;
+                        on_frame(&pf);
+                    }
+                } else if (rb->buf[0] == 'a') {
+                    if (parse_ap_frame(rb->buf, STATUS_FRAME_LEN, &pf.data.ap) == 0) {
+                        pf.type = FRAME_TYPE_AP;
+                        on_frame(&pf);
+                    }
                 }
-                /* 注意：帧尾合法但帧头既非 'u' 也非 'c' 时，这 20 字节被静默丢弃 */
+                /* 注意：帧尾合法但帧头不属于上述四种时，这 20 字节被静默丢弃 */
 
                 rb->wr = 0;
             } else {
@@ -195,6 +205,115 @@ int parse_car_frame(const uint8_t *buf, size_t len, RobotState *out)
     memcpy(&pitch_raw, buf + 16, 2);
     out->pitch = pitch_raw / 32768.0f * 180.0f;
 
+    return 0;
+}
+
+/*
+ * IMU 原始值 → 物理量换算。
+ * 系数来自传感器量程配置（±16g / ±2000°/s），与板端 IIO 驱动一致。
+ * 换算放在解析侧，线上只传 int16，省带宽也避免板端做浮点。
+ */
+void imu_raw_to_physical(const int16_t *raw, ImuState *out)
+{
+    for (int i = 0; i < 3; i++) {
+        out->accel_g[i]  = (float)raw[i]     / ICM_ACCEL_LSB_PER_G;
+        out->gyro_dps[i] = (float)raw[3 + i] / ICM_GYRO_LSB_PER_DPS;
+    }
+    out->temp_c = (float)raw[6] / ICM_TEMP_LSB_PER_C + ICM_TEMP_OFFSET_C;
+}
+
+/*
+ * 组包 IMU 帧（ICM20608 六轴 + 温度），布局：
+ *
+ *   [0]      'i'            帧类型
+ *   [1]      0x00           保留
+ *   [2..3]   accel_x        int16 原始值
+ *   [4..5]   accel_y
+ *   [6..7]   accel_z
+ *   [8..9]   gyro_x
+ *   [10..11] gyro_y
+ *   [12..13] gyro_z
+ *   [14..15] temp
+ *   [16..17] seq            uint16 帧序号
+ *   [18..19] 0x55 0x56      帧尾
+ */
+int build_imu_frame(uint8_t *out, size_t out_len, const int16_t *raw, uint16_t seq)
+{
+    if (out_len < STATUS_FRAME_LEN || !raw) return -1;
+
+    memset(out, 0, STATUS_FRAME_LEN);
+    out[0] = 'i';
+    out[1] = 0x00;
+    for (int i = 0; i < ICM_RAW_LEN; i++) {
+        int16_t v = raw[i];
+        memcpy(out + 2 + (size_t)i * 2, &v, 2);
+    }
+    memcpy(out + 16, &seq, 2);
+    out[18] = 0x55;
+    out[19] = 0x56;
+    return 0;
+}
+
+/*
+ * 组包 AP3216C 帧，布局：
+ *
+ *   [0]      'a'            帧类型
+ *   [1]      0x00           保留
+ *   [2..3]   als            int16 原始计数
+ *   [4..5]   ps
+ *   [6..7]   ir
+ *   [8..15]  0x00           保留
+ *   [16..17] seq            uint16 帧序号
+ *   [18..19] 0x55 0x56      帧尾
+ */
+int build_ap_frame(uint8_t *out, size_t out_len,
+                   int16_t als, int16_t ps, int16_t ir, uint16_t seq)
+{
+    if (out_len < STATUS_FRAME_LEN) return -1;
+
+    memset(out, 0, STATUS_FRAME_LEN);
+    out[0] = 'a';
+    out[1] = 0x00;
+    memcpy(out + 2,  &als, 2);
+    memcpy(out + 4,  &ps,  2);
+    memcpy(out + 6,  &ir,  2);
+    memcpy(out + 16, &seq, 2);
+    out[18] = 0x55;
+    out[19] = 0x56;
+    return 0;
+}
+
+/*
+ * 解析 IMU 帧：只做帧头与长度校验，随后把 int16 原始值换算成物理量。
+ * 失败返回 -1（长度不足或帧头不是 'i'）。
+ */
+int parse_imu_frame(const uint8_t *buf, size_t len, ImuState *out)
+{
+    if (len < STATUS_FRAME_LEN) return -1;
+    if (buf[0] != 'i') return -1;
+
+    int16_t raw[ICM_RAW_LEN];
+    for (int i = 0; i < ICM_RAW_LEN; i++) {
+        memcpy(&raw[i], buf + 2 + (size_t)i * 2, 2);
+    }
+    uint16_t seq;
+    memcpy(&seq, buf + 16, 2);
+
+    imu_raw_to_physical(raw, out);
+    out->seq = seq;
+    return 0;
+}
+
+/* 解析 AP3216C 帧：原始计数直接透传，不做换算 */
+int parse_ap_frame(const uint8_t *buf, size_t len, ApState *out)
+{
+    if (len < STATUS_FRAME_LEN) return -1;
+    if (buf[0] != 'a') return -1;
+
+    memcpy(&out->als, buf + 2, 2);
+    memcpy(&out->ps,  buf + 4, 2);
+    memcpy(&out->ir,  buf + 6, 2);
+    memcpy(&out->seq, buf + 16, 2);
     return 0;
 }
 

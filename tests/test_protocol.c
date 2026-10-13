@@ -464,6 +464,121 @@ static void t15_empty_input(void)
     record("T15", "empty_input_zero_frames", 0, 0, n, ok, 0, "len=0 -> no frame, no crash");
 }
 
+/* 构造 IMU 帧（真实传感器帧类型 'i'），布局与 build_imu_frame 严格对应 */
+static void make_imu(uint8_t *b, const int16_t raw[ICM_RAW_LEN], uint16_t seq)
+{
+    memset(b, 0, STATUS_FRAME_LEN);
+    memcpy(b + 2, raw, sizeof(int16_t) * ICM_RAW_LEN);
+    memcpy(b + 16, &seq, 2);
+    b[0]  = 'i';
+    b[18] = 0x55;
+    b[19] = 0x56;
+}
+
+/* T16 IMU 帧解析 + 物理量换算（build/parse 闭环） */
+static void t16_imu_frame(void)
+{
+    /* 静止水平放置的理想值：az = +1g(2048)，其余 0；temp raw=0 → 25℃ */
+    const int16_t raw[ICM_RAW_LEN] = { 0, 0, 2048, 0, 0, 164, 0 };
+    uint8_t f[STATUS_FRAME_LEN];
+
+    /* 先测组帧：布局必须落在预期字节位 */
+    int rb = build_imu_frame(f, sizeof(f), raw, 300);
+    int layout_ok = (rb == 0) && f[0] == 'i' && f[1] == 0x00 &&
+                    f[18] == 0x55 && f[19] == 0x56;
+    uint16_t seq_chk = 0;
+    memcpy(&seq_chk, f + 16, 2);
+    layout_ok = layout_ok && (seq_chk == 300);
+
+    /* 再测解析：换算系数 2048 / 16.4 / 326.8+25 */
+    ImuState st;
+    memset(&st, 0, sizeof(st));
+    int rp = parse_imu_frame(f, sizeof(f), &st);
+
+    int ok = layout_ok && (rp == 0) &&
+             feq(st.accel_g[2], 1.0f) && feq(st.accel_g[0], 0.0f) &&
+             feq(st.gyro_dps[2], 10.0f) && feq(st.temp_c, 25.0f) &&
+             st.seq == 300;
+
+    /* 负值域：int16 负数必须正确还原（不能当无符号处理） */
+    const int16_t neg[ICM_RAW_LEN] = { -2048, -1024, 0, -164, -328, 0, -3268 };
+    build_imu_frame(f, sizeof(f), neg, 65535);
+    ImuState st2;
+    memset(&st2, 0, sizeof(st2));
+    parse_imu_frame(f, sizeof(f), &st2);
+    ok = ok && feq(st2.accel_g[0], -1.0f) && feq(st2.accel_g[1], -0.5f) &&
+         feq(st2.gyro_dps[0], -10.0f) && feq(st2.temp_c, 15.0f) &&
+         st2.seq == 65535;
+
+    /* 短缓冲 / 错误帧头必须拒绝 */
+    uint8_t small[STATUS_FRAME_LEN - 1];
+    int r_small = build_imu_frame(small, sizeof(small), raw, 0);
+    make_imu(f, raw, 1);
+    f[0] = 'x';
+    ImuState st3;
+    int r_head = parse_imu_frame(f, sizeof(f), &st3);
+    ok = ok && (r_small == -1) && (r_head == -1);
+
+    record("T16", "imu_frame_build_parse_scaling", STATUS_FRAME_LEN, 4,
+           (size_t)(layout_ok ? 1 : 0) + (size_t)(rp == 0 ? 1 : 0) +
+           (size_t)(r_small == -1 ? 1 : 0) + (size_t)(r_head == -1 ? 1 : 0),
+           ok, 0, "raw/2048 g, raw/16.4 dps, raw/326.8+25 C; negative int16 verified");
+}
+
+/* T17 AP3216C 帧解析 */
+static void t17_ap_frame(void)
+{
+    uint8_t f[STATUS_FRAME_LEN];
+    int rb = build_ap_frame(f, sizeof(f), 1234, 56, 789, 77);
+
+    ApState a;
+    memset(&a, 0, sizeof(a));
+    int rp = parse_ap_frame(f, sizeof(f), &a);
+
+    int ok = (rb == 0) && (rp == 0) && f[0] == 'a' &&
+             a.als == 1234 && a.ps == 56 && a.ir == 789 && a.seq == 77;
+
+    /* 保留字节必须为 0，避免脏数据被当成有效字段 */
+    for (int i = 8; i <= 15; i++) if (f[i] != 0x00) ok = 0;
+
+    uint8_t small[STATUS_FRAME_LEN - 1];
+    int r_small = build_ap_frame(small, sizeof(small), 0, 0, 0, 0);
+    build_ap_frame(f, sizeof(f), 0, 0, 0, 0);
+    f[0] = 'i';                          /* 帧头被改成 IMU，AP 解析必须拒绝 */
+    ApState a2;
+    int r_head = parse_ap_frame(f, sizeof(f), &a2);
+    ok = ok && (r_small == -1) && (r_head == -1);
+
+    record("T17", "ap3216c_frame_build_parse", STATUS_FRAME_LEN, 3,
+           (size_t)(rp == 0 ? 1 : 0) + (size_t)(r_small == -1 ? 1 : 0) +
+           (size_t)(r_head == -1 ? 1 : 0),
+           ok, 0, "als/ps/ir raw counts pass through, reserved bytes zero");
+}
+
+/* T18 四种帧类型混合流：类型分派不能串台 */
+static void t18_mixed_types(void)
+{
+    uint8_t buf[STATUS_FRAME_LEN * 4];
+    const int16_t imu_raw[ICM_RAW_LEN] = { 1, 2, 3, 4, 5, 6, 7 };
+
+    make_uwb(buf, 1, 1.0f, 1.0f, 1.0f);
+    make_car(buf + STATUS_FRAME_LEN, 1, 1, 1, 1, 1, 1.0f, 1, 1, 1);
+    make_imu(buf + STATUS_FRAME_LEN * 2, imu_raw, 9);
+    build_ap_frame(buf + STATUS_FRAME_LEN * 3, STATUS_FRAME_LEN, 11, 22, 33, 44);
+
+    size_t n = feed(buf, sizeof(buf));
+    int ok = (n == 4) &&
+             g_list.frames[0].type == FRAME_TYPE_UWB &&
+             g_list.frames[1].type == FRAME_TYPE_CAR &&
+             g_list.frames[2].type == FRAME_TYPE_IMU &&
+             g_list.frames[2].data.imu.seq == 9 &&
+             g_list.frames[3].type == FRAME_TYPE_AP &&
+             g_list.frames[3].data.ap.als == 11;
+
+    record("T18", "mixed_u_c_i_a_dispatch", sizeof(buf), 4, n, ok, 0,
+           "four frame types in one stream, dispatch by buf[0]");
+}
+
 /* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
@@ -513,6 +628,9 @@ int main(int argc, char *argv[])
     t13_build_control();
     t14_mode_name();
     t15_empty_input();
+    t16_imu_frame();
+    t17_ap_frame();
+    t18_mixed_types();
 
     printf("=== summary: %d passed, %d failed ===\n", g_pass, g_fail);
 

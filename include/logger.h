@@ -9,6 +9,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "robot_protocol.h"
+
 /*
  * 打开日志文件，返回文件句柄；失败返回 NULL。
  * dir       日志目录，不存在会自动创建
@@ -26,6 +28,12 @@ void  logger_write_car(FILE *fp, double timestamp,
 void  logger_write_uwb(FILE *fp, double timestamp,
                        int32_t tag_num,
                        float x, float y, float z);
+
+/* 追加一行 IMU 记录（8 列：加速度 g / 角速度 °/s / 温度 ℃） */
+void  logger_write_imu(FILE *fp, double timestamp, const ImuState *imu);
+
+/* 追加一行 AP3216C 记录（4 列：ALS / PS / IR 原始计数） */
+void  logger_write_ap(FILE *fp, double timestamp, const ApState *ap);
 
 /* 关闭日志文件；fp 为 NULL 时安全 */
 void  logger_close(FILE *fp);

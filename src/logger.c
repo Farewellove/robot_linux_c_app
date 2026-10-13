@@ -11,19 +11,54 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-/* 目录不存在则创建（0755）；存在但不是目录则报错 */
+/*
+ * 递归创建目录（等价 mkdir -p）：日志目录是 "log/<项目名>/" 这种多层结构，
+ * 单层 mkdir 在父目录不存在时会失败。已存在且是目录视为成功。
+ */
 static int ensure_dir(const char *dir)
 {
-    struct stat st;
-    if (stat(dir, &st) == 0) {
-        return S_ISDIR(st.st_mode) ? 0 : -1;
+    if (!dir || dir[0] == '\0') return -1;
+
+    char tmp[512];
+    size_t len = strlen(dir);
+    if (len >= sizeof(tmp)) return -1;
+    memcpy(tmp, dir, len + 1);
+
+    /* 去掉结尾的斜杠，避免最后一段为空 */
+    while (len > 1 && tmp[len - 1] == '/') {
+        tmp[--len] = '\0';
     }
-    return mkdir(dir, 0755);
+
+    for (size_t i = 1; i < len; i++) {
+        if (tmp[i] != '/') continue;
+
+        char saved = tmp[i];
+        tmp[i] = '\0';
+
+        struct stat st;
+        if (stat(tmp, &st) != 0) {
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+                tmp[i] = saved;
+                return -1;
+            }
+        } else if (!S_ISDIR(st.st_mode)) {
+            tmp[i] = saved;
+            return -1;
+        }
+        tmp[i] = saved;
+    }
+
+    struct stat st;
+    if (stat(tmp, &st) != 0) {
+        return mkdir(tmp, 0755);
+    }
+    return S_ISDIR(st.st_mode) ? 0 : -1;
 }
 
 /*
@@ -56,9 +91,14 @@ FILE *logger_open(const char *dir, const char *prefix)
         return NULL;
     }
 
-    /* 两行表头：UWB 记录与 CAR 记录的列布局不同，靠列数区分 */
+    /*
+     * 四行表头：UWB / CAR / IMU / AP 四种记录列数分别为 5 / 10 / 8 / 4，
+     * 靠列数即可区分（沿用原有约定，不额外加类型列）。
+     */
     fprintf(fp, "timestamp,tag_num,x,y,z\n");
     fprintf(fp, "timestamp,vx,vy,vz,weld_state,d_angle,d_dis,yaw,roll,pitch\n");
+    fprintf(fp, "timestamp,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,temp\n");
+    fprintf(fp, "timestamp,als,ps,ir\n");
     fflush(fp);
 
     printf("Log file: %s\n", path);
@@ -86,6 +126,27 @@ void logger_write_uwb(FILE *fp, double timestamp,
     if (!fp) return;
     fprintf(fp, "%.6f,%d,%.3f,%.3f,%.3f\n",
             timestamp, tag_num, x, y, z);
+    fflush(fp);
+}
+
+/* 追加一行 IMU 记录（8 列）。加速度 g、角速度 °/s、温度 ℃ */
+void logger_write_imu(FILE *fp, double timestamp, const ImuState *imu)
+{
+    if (!fp || !imu) return;
+    fprintf(fp, "%.6f,%.4f,%.4f,%.4f,%.3f,%.3f,%.3f,%.2f\n",
+            timestamp,
+            imu->accel_g[0], imu->accel_g[1], imu->accel_g[2],
+            imu->gyro_dps[0], imu->gyro_dps[1], imu->gyro_dps[2],
+            imu->temp_c);
+    fflush(fp);
+}
+
+/* 追加一行 AP3216C 记录（4 列，原始计数） */
+void logger_write_ap(FILE *fp, double timestamp, const ApState *ap)
+{
+    if (!fp || !ap) return;
+    fprintf(fp, "%.6f,%d,%d,%d\n", timestamp,
+            ap->als, ap->ps, ap->ir);
     fflush(fp);
 }
 
