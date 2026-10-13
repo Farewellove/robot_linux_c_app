@@ -91,8 +91,11 @@ cd /lib/modules/4.1.15 && ./load_drivers.sh
 ./sensor_robot -p 19090 --period 10 --imu-every 1 --ap-every 10 --print-every 100
 
 # ③ PC：接收端照原样跑，命令一个字都不用改
-./output/pc/robot_linux_app -i <开发板IP> -p 19090 -e 0 -m 0 --period 10
+./output/pc/robot_linux_app -i 192.168.1.55 -p 19090 -e 0 -m 0 --period 10
 ```
+
+> 注意方向：这一节是**板子监听、PC 主动连板子**；而 `board_bench_*` 那套是**PC 监听、板子主动连 PC**
+> （板端命令填的是 PC 的 `192.168.1.66`）。两者方向相反，别混用。
 
 无硬件时也能自测这条链路 —— 造一棵假 IIO 目录树喂给 `--iio-root`：
 
@@ -185,13 +188,23 @@ python3 performance_evaluation/scripts/analyze_timing.py \
 
 ## 运行
 
+### 实测环境地址
+
+| 角色 | IP | 说明 |
+|---|---|---|
+| PC（上位机 / 模拟设备端） | `192.168.1.66` | `board_bench_pc.sh` 会自动探测，脚本里不用手填 |
+| 开发板（i.MX6ULL） | `192.168.1.55` | 作为真实数据源时用 `-i 192.168.1.55` 连它 |
+
 ```bash
-# 默认参数（IP 192.168.1.103，端口 9090，周期 10ms）
-./output/pc/robot_linux_app
+# 连开发板（真实传感器数据源跑在板子上时）
+./output/pc/robot_linux_app -i 192.168.1.55 -p 19090 -e 0 -m 0 --period 10
 
 # 完整参数
-./output/pc/robot_linux_app -i 192.168.1.103 -p 9090 -e 1 -m 0 --vx 0 --vy 0 --vz 0 --period 10
+./output/pc/robot_linux_app -i 192.168.1.55 -p 19090 -e 1 -m 0 --vx 0 --vy 0 --vz 0 --period 10
 ```
+
+> 代码里的 `DEFAULT_ROBOT_IP` 仍是 `192.168.1.103`（原机器人地址，见 `include/app_config.h`），
+> 连开发板时显式传 `-i 192.168.1.55`，或改那个宏把它变成默认值。
 
 > 开发板上运行的是 `output/arm/robot_linux_app`（经 `make deploy` 放到板端 `/lib/modules/4.1.15/`，
 > 与 `ap3216cAPP`、`gt911_recovery_test` 等外设测试程序同一目录）。
@@ -200,8 +213,8 @@ python3 performance_evaluation/scripts/analyze_timing.py \
 
 | 参数 | 说明 | 默认值 |
 |---|---|---|
-| `-i <ip>` | 机器人 IP 地址 | 192.168.1.103 |
-| `-p <port>` | 机器人 TCP 端口 | 9090 |
+| `-i <ip>` | 对端 IP 地址（连开发板填 `192.168.1.55`） | 192.168.1.103 |
+| `-p <port>` | 对端 TCP 端口（实测用 19090） | 9090 |
 | `-e <0\|1>` | 使能位（默认不使能，避免连上就动） | 0 |
 | `-m <0\|1\|2>` | 模式 (0=STOP, 1=MANUAL, 2=AUTO) | 0 |
 | `--vx / --vy / --vz <val>` | 速度分量（int8） | 0 |
