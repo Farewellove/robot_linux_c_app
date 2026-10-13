@@ -1,0 +1,17 @@
+metric,value
+listen_port,19090
+sample_period_ms,10
+imu_every,1
+ap_every,10
+cycles,2741
+tx_imu_frames,2741
+tx_ap_frames,274
+err_imu_read,0
+err_ap_read,0
+err_send,0
+rx_ctrl_frames,2699
+rx_bad_ctrl_frames,0
+rx_seq_gaps,0
+first_ctrl_seq,0
+icm20608_dir,/sys/bus/iio/devices/iio:device1/
+ap3216c_dir,/sys/bus/iio/devices/iio:device0/
