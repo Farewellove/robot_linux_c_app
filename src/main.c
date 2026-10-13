@@ -23,11 +23,19 @@
 #include <errno.h>
 #include <time.h>
 #include <getopt.h>
+#include <sys/socket.h>   /* shutdown()：join receiver 之前唤醒阻塞的 recv */
 
 #include "app_config.h"
 #include "robot_protocol.h"
 #include "robot_tcp.h"
 #include "logger.h"
+#include "metrics.h"
+
+/* timespec → 64 位纳秒（CLOCK_MONOTONIC 基准），仅用于周期测量 */
+static uint64_t ts_to_ns(const struct timespec *ts)
+{
+    return (uint64_t)ts->tv_sec * 1000000000ULL + (uint64_t)ts->tv_nsec;
+}
 
 static volatile sig_atomic_t g_running = 1;
 static int g_sockfd = -1;
@@ -110,26 +118,115 @@ static void *sender_thread(void *arg)
 
     long period_ns = (long)cfg->send_period_ms * 1000000L;
 
-    printf("[SEND] Thread started, period = %d ms\n", cfg->send_period_ms);
+    /*
+     * 可选测量：只有 --benchmark 打开时才预分配采样数组并逐周期打点。
+     * 关闭时（默认）下面的 metrics_on 全为 0，不产生额外系统调用。
+     */
+    Metrics metrics;
+    int metrics_on = 0;
+    if (cfg->benchmark) {
+        size_t cap = (cfg->max_cycles > 0) ? (size_t)cfg->max_cycles
+                                           : (size_t)METRICS_DEFAULT_CAPACITY;
+        if (metrics_init(&metrics, cap, (uint64_t)period_ns, cfg->abs_timer) != 0) {
+            fprintf(stderr, "[METRICS] init failed, benchmark disabled.\n");
+        } else {
+            metrics_on = 1;
+        }
+    }
+
+    /*
+     * 绝对定时模式：以线程启动时刻为基准，为每个周期算出一个绝对目标时刻
+     * next_sched_ns，用 TIMER_ABSTIME 睡到该时刻。这样单周期的超时不会
+     * 累积到后续周期（相对睡眠会累积漂移）。该模式仅在 --abs-timer 时启用，
+     * 默认仍走原来的相对睡眠路径，保证默认行为不变。
+     */
+    uint64_t next_sched_ns = 0;
+    if (cfg->abs_timer) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        next_sched_ns = ts_to_ns(&now);
+    }
+
+    printf("[SEND] Thread started, period = %d ms, timer = %s%s\n",
+           cfg->send_period_ms,
+           cfg->abs_timer ? "absolute" : "relative",
+           metrics_on ? ", metrics on" : "");
+
+    uint64_t cycle = 0;
 
     while (g_running) {
+        struct timespec t0, t1;
+        int send_ret = 0;
+        int send_err = 0;
+
+        if (metrics_on) clock_gettime(CLOCK_MONOTONIC, &t0);
+
         build_control_frame(frame, sizeof(frame),
                             (uint8_t)cfg->enable, (uint8_t)cfg->mode,
                             (int8_t)cfg->vx, (int8_t)cfg->vy, (int8_t)cfg->vz,
                             seq);
 
-        if (tcp_send_all(g_sockfd, frame, sizeof(frame)) != 0) {
+        int rc = tcp_send_all(g_sockfd, frame, sizeof(frame));
+        if (rc != 0) {
+            send_ret = -1;
+            send_err = errno;
+        }
+
+        if (metrics_on) {
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+
+            CycleSample s;
+            memset(&s, 0, sizeof(s));
+            s.cycle_index  = cycle;
+            s.scheduled_ns = cfg->abs_timer ? next_sched_ns : 0;
+            s.start_ns     = ts_to_ns(&t0);
+            s.end_ns       = ts_to_ns(&t1);
+            s.send_ret     = send_ret;
+            s.send_errno   = send_err;
+            metrics_record(&metrics, &s);
+        }
+
+        if (rc != 0) {
             fprintf(stderr, "[SEND] Failed, stopping.\n");
             g_running = 0;
             break;
         }
 
         seq++;   /* 回绕是预期行为：uint8_t 溢出后从 0 继续 */
+        cycle++;
 
-        struct timespec req;
-        req.tv_sec  = period_ns / 1000000000L;
-        req.tv_nsec = period_ns % 1000000000L;
-        clock_nanosleep(CLOCK_MONOTONIC, 0, &req, NULL);
+        /* --cycles N：跑满 N 个周期后主动收尾，便于自动化测试定量采集 */
+        if (cfg->max_cycles > 0 && cycle >= (uint64_t)cfg->max_cycles) {
+            printf("[SEND] Reached cycle limit (%d), stopping.\n", cfg->max_cycles);
+            g_running = 0;
+            break;
+        }
+
+        if (cfg->abs_timer) {
+            next_sched_ns += (uint64_t)period_ns;
+
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if (next_sched_ns > ts_to_ns(&now)) {
+                struct timespec target;
+                target.tv_sec  = (time_t)(next_sched_ns / 1000000000ULL);
+                target.tv_nsec = (long)(next_sched_ns % 1000000000ULL);
+                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &target, NULL);
+            }
+            /* 若已经超过目标时刻则不再睡，直接进入下一周期（该周期会记为超期） */
+        } else {
+            struct timespec req;
+            req.tv_sec  = period_ns / 1000000000L;
+            req.tv_nsec = period_ns % 1000000000L;
+            clock_nanosleep(CLOCK_MONOTONIC, 0, &req, NULL);
+        }
+    }
+
+    /* 采样由本线程独占写入，此处已无其他写者，直接导出即可，无需加锁 */
+    if (metrics_on) {
+        metrics_write_csv(&metrics, cfg->metrics_csv);
+        metrics_print_summary(&metrics);
+        metrics_free(&metrics);
     }
 
     printf("[SEND] Thread exiting.\n");
@@ -181,6 +278,10 @@ static void print_usage(const char *prog)
     printf("  --vy <val>    Velocity Y          (default: 0)\n");
     printf("  --vz <val>    Velocity Z          (default: 0)\n");
     printf("  --period <ms> Send period in ms   (default: %d)\n", DEFAULT_SEND_PERIOD_MS);
+    printf("  --benchmark   Collect per-cycle timing metrics (default: off)\n");
+    printf("  --metrics-csv <path>  Metrics CSV output (default: %s)\n", DEFAULT_METRICS_CSV);
+    printf("  --cycles <n>  Exit after n send cycles, 0 = unlimited (default: 0)\n");
+    printf("  --abs-timer   Use absolute CLOCK_MONOTONIC deadline instead of relative sleep\n");
     printf("  -h            Show this help\n");
 }
 
@@ -195,10 +296,14 @@ int main(int argc, char *argv[])
      * —— 因为 vx/vy/vz/period 都是"带参数、按名字区分"的同类选项。
      */
     struct option long_opts[] = {
-        {"vx",     required_argument, 0, 0},
-        {"vy",     required_argument, 0, 0},
-        {"vz",     required_argument, 0, 0},
-        {"period", required_argument, 0, 0},
+        {"vx",          required_argument, 0, 0},
+        {"vy",          required_argument, 0, 0},
+        {"vz",          required_argument, 0, 0},
+        {"period",      required_argument, 0, 0},
+        {"benchmark",   no_argument,       0, 0},
+        {"metrics-csv", required_argument, 0, 0},
+        {"cycles",      required_argument, 0, 0},
+        {"abs-timer",   no_argument,       0, 0},
         {0, 0, 0, 0}
     };
 
@@ -230,6 +335,14 @@ int main(int argc, char *argv[])
                 cfg.vz = atoi(optarg);
             } else if (strcmp(long_opts[long_idx].name, "period") == 0) {
                 cfg.send_period_ms = atoi(optarg);
+            } else if (strcmp(long_opts[long_idx].name, "benchmark") == 0) {
+                cfg.benchmark = 1;
+            } else if (strcmp(long_opts[long_idx].name, "abs-timer") == 0) {
+                cfg.abs_timer = 1;
+            } else if (strcmp(long_opts[long_idx].name, "metrics-csv") == 0) {
+                strncpy(cfg.metrics_csv, optarg, sizeof(cfg.metrics_csv) - 1);
+            } else if (strcmp(long_opts[long_idx].name, "cycles") == 0) {
+                cfg.max_cycles = atoi(optarg);
             }
             break;
         case 'h':
@@ -248,6 +361,14 @@ int main(int argc, char *argv[])
     if (cfg.send_period_ms < 1) {
         fprintf(stderr, "Send period must be at least 1 ms\n");
         return 1;
+    }
+    if (cfg.max_cycles < 0) {
+        fprintf(stderr, "Cycle limit must be >= 0\n");
+        return 1;
+    }
+    /* 绝对定时模式只有配合指标采集才有意义，单独开启不做拦截，仅提示 */
+    if (cfg.abs_timer && !cfg.benchmark) {
+        fprintf(stderr, "Note: --abs-timer without --benchmark has no metrics output.\n");
     }
 
     app_config_print(&cfg);
@@ -298,12 +419,18 @@ int main(int argc, char *argv[])
      *   receiver —— 阻塞在 recv 上，靠信号打断 EINTR 后检查标志退出，
      *               或者对端关闭连接使 recv 返回 0 而退出。
      *
-     * 注意：Ctrl+C 的信号是投递给进程的，由内核挑一个未屏蔽它的线程处理，
-     * 不一定落在 receiver 上。如果信号被主线程或 sender 收走，而出数据的那一端
-     * 一直静默，receiver 会继续阻塞在 recv 上，这里的 join 就会挂住 ——
-     * 真正稳妥的做法是在 join 之前先 shutdown(g_sockfd) 唤醒它，或给 recv 加超时。
+     * 退出时序加固（本次修复项）：
+     *   Ctrl+C 的信号由内核挑一个未屏蔽它的线程处理，不保证落在 receiver 上。
+     *   若信号被主线程或 sender 收走，而对端此时一直静默，receiver 会继续阻塞在
+     *   recv 上，后面的 join 就会永久挂住（只能 kill -9）。因此在 join(receiver)
+     *   之前先 shutdown(g_sockfd, SHUT_RDWR)：内核会让阻塞中的 recv 立即返回 0，
+     *   receiver 随即检查 g_running 退出。shutdown 只影响本端读写，不改变协议行为。
      */
     pthread_join(sender_tid, NULL);
+
+    if (g_sockfd >= 0) {
+        shutdown(g_sockfd, SHUT_RDWR);
+    }
     pthread_join(receiver_tid, NULL);
 
 cleanup:

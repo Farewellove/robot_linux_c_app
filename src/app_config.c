@@ -22,6 +22,12 @@ void app_config_set_defaults(AppConfig *cfg)
     cfg->vy             = 0;
     cfg->vz             = 0;
     cfg->send_period_ms = DEFAULT_SEND_PERIOD_MS;
+
+    /* 测量开关默认关闭：默认运行路径与改动前完全一致 */
+    cfg->benchmark  = 0;
+    cfg->abs_timer  = 0;
+    cfg->max_cycles = 0;
+    strncpy(cfg->metrics_csv, DEFAULT_METRICS_CSV, sizeof(cfg->metrics_csv) - 1);
 }
 
 /* 打印最终生效的参数，方便确认命令行是否被正确解析 */
@@ -38,5 +44,15 @@ void app_config_print(const AppConfig *cfg)
     printf("  Vy         : %d\n", cfg->vy);
     printf("  Vz         : %d\n", cfg->vz);
     printf("  Period     : %d ms\n", cfg->send_period_ms);
+    printf("  Benchmark  : %s\n", cfg->benchmark ? "on" : "off");
+    if (cfg->benchmark) {
+        printf("  Timer mode : %s\n", cfg->abs_timer ? "absolute (TIMER_ABSTIME)"
+                                                    : "relative (clock_nanosleep)");
+        printf("  Max cycles : %s\n", cfg->max_cycles > 0 ? "(see below)" : "unlimited");
+        if (cfg->max_cycles > 0) {
+            printf("               %d\n", cfg->max_cycles);
+        }
+        printf("  Metrics CSV: %s\n", cfg->metrics_csv);
+    }
     printf("============================================\n");
 }

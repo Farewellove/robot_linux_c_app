@@ -14,6 +14,9 @@
 #define LOG_DIR               "logs"   /* CSV 日志输出目录 */
 #define RECV_BUF_SIZE         4096     /* 单次 recv 的暂存区大小 */
 
+/* 周期指标 CSV 默认输出路径（--benchmark 打开且未指定 --metrics-csv 时使用） */
+#define DEFAULT_METRICS_CSV   "performance_evaluation/results/03_periodic_timing.csv"
+
 /* 运行期配置：先填默认值，再被命令行参数覆盖 */
 typedef struct {
     char robot_ip[64];     /* 机器人 IP（点分十进制），带结尾 '\0' */
@@ -24,6 +27,12 @@ typedef struct {
     int  vy;
     int  vz;
     int  send_period_ms;   /* 控制帧发送周期，最小 1 ms */
+
+    /* ---- 以下为测量用可选开关，默认全部关闭，不影响默认通信行为 ---- */
+    int  benchmark;        /* 1 = 采集每周期调度指标（--benchmark） */
+    int  abs_timer;        /* 1 = 绝对时间定时 TIMER_ABSTIME（--abs-timer） */
+    int  max_cycles;       /* >0 = 跑满该周期数后退出；0 = 不限制（--cycles） */
+    char metrics_csv[256]; /* 指标 CSV 输出路径（--metrics-csv） */
 } AppConfig;
 
 /* 填默认值（会先 memset 清零） */
