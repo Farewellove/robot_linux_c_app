@@ -12,7 +12,9 @@ obj/
 *.o
 
 # Runtime CSV logs written by the application
-logs/
+# 只忽略仓库根目录的 logs/（程序运行时输出）；
+# 不能写成 logs/ —— 那会连带忽略 performance_evaluation/logs/
+/logs/
 
 # Claude Code local settings
 .claude/

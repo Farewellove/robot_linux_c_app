@@ -1,0 +1,440 @@
+# 改动前基线 commit 与本次工作区差异（证据留存）
+# baseline commit: 197bb98b76ced2479bfcaceab36bf373125a91a9 (添加注释)
+# date: 2026-10-11T13:32:47+08:00
+
+ .gitignore           |   8 +++
+ Makefile             |  51 +++++++++++++++--
+ README.md            |  23 ++++++++
+ include/app_config.h |   9 +++
+ src/app_config.c     |  16 ++++++
+ src/main.c           | 155 ++++++++++++++++++++++++++++++++++++++++++++++-----
+ 6 files changed, 244 insertions(+), 18 deletions(-)
+
+===== FULL DIFF =====
+diff --git a/.gitignore b/.gitignore
+index 0fef9d4..bf93c86 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,10 +1,18 @@
+ # Compiled binary
+ robot_linux_app
+ 
++# Test / mock binaries
++test_protocol
++test_protocol_asan
++mock_robot
++
+ # Object files
+ obj/
+ *.o
+ 
++# Runtime CSV logs written by the application
++logs/
++
+ # Claude Code local settings
+ .claude/
+ 
+diff --git a/Makefile b/Makefile
+index 07b41dc..42f2c26 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,10 @@
+ # robot_linux_c_app 构建脚本
+ #
+-#   make        编译，产物为根目录下的 robot_linux_app
+-#   make clean  删除 obj/ 与可执行文件
++#   make            编译，产物为根目录下的 robot_linux_app
++#   make mock       编译 loopback 模拟机器人服务端
++#   make test       编译并运行协议解析状态机测试
++#   make test-asan  用 AddressSanitizer + UBSan 重编译并运行协议测试
++#   make clean      删除 obj/ 与可执行文件
+ #
+ # 源文件由 wildcard 自动收集 src/*.c，新增 .c 文件无需改本文件。
+ 
+@@ -14,13 +17,19 @@ CFLAGS  += -D_POSIX_C_SOURCE=200112L
+ INCDIR  := include
+ SRCDIR  := src
+ OBJDIR  := obj
++TESTDIR := tests
+ TARGET  := robot_linux_app
++TESTBIN := test_protocol
++MOCKBIN := mock_robot
+ 
+ SRCS := $(wildcard $(SRCDIR)/*.c)
+ # 把 src/xxx.c 映射成 obj/xxx.o，只重编改动过的文件
+ OBJS := $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SRCS))
+ 
+-.PHONY: all clean
++# 协议测试只依赖协议的纯函数实现，不链接 socket/线程，便于独立与插桩测试
++PROTO_SRC := $(SRCDIR)/robot_protocol.c
++
++.PHONY: all clean test test-asan mock cross-check help
+ 
+ all: $(TARGET)
+ 
+@@ -33,5 +42,39 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c
+ 	@mkdir -p $(OBJDIR)
+ 	$(CC) $(CFLAGS) -I$(INCDIR) -c -o $@ $<
+ 
++# 协议解析状态机测试：直接编译生产解析器源码，测的就是上线代码
++$(TESTBIN): $(TESTDIR)/test_protocol.c $(PROTO_SRC)
++	$(CC) $(CFLAGS) -I$(INCDIR) -o $@ $^
++
++# loopback 模拟机器人服务端（仅测试用，不参与主程序链接）
++$(MOCKBIN): $(TESTDIR)/mock_robot.c
++	$(CC) $(CFLAGS) -o $@ $^
++
++test: $(TESTBIN)
++	./$(TESTBIN) performance_evaluation/results/03_parser_tests.csv
++
++# AddressSanitizer + UndefinedBehaviorSanitizer 版本：用于排查越界/未定义行为。
++# 注意：ASan 只能"报出问题"，未报警不等于形式化证明无缺陷。
++test-asan:
++	$(CC) -std=c11 -Wall -Wextra -O1 -g -pthread -D_POSIX_C_SOURCE=200112L \
++	      -fsanitize=address,undefined -fno-omit-frame-pointer \
++	      -I$(INCDIR) -o $(TESTBIN)_asan $(TESTDIR)/test_protocol.c $(PROTO_SRC)
++	ASAN_OPTIONS=detect_leaks=1 ./$(TESTBIN)_asan /tmp/03_parser_tests_asan.csv
++
++mock: $(MOCKBIN)
++
++# 交叉编译可用性检查：只编译不链接运行，产物用于确认 ARM 工具链能通过
++cross-check:
++	@command -v arm-linux-gnueabihf-gcc >/dev/null 2>&1 || \
++		{ echo "arm-linux-gnueabihf-gcc not found"; exit 1; }
++	arm-linux-gnueabihf-gcc $(CFLAGS) -I$(INCDIR) -c -o /tmp/cross_check_main.o $(SRCDIR)/main.c
++	arm-linux-gnueabihf-gcc $(CFLAGS) -I$(INCDIR) -c -o /tmp/cross_check_metrics.o $(SRCDIR)/metrics.c
++	arm-linux-gnueabihf-gcc $(CFLAGS) -I$(INCDIR) -c -o /tmp/cross_check_proto.o $(PROTO_SRC)
++	@echo "cross-check OK (ARM objects built)"
++
++help:
++	@echo "targets: all (default) | mock | test | test-asan | cross-check | clean"
++
+ clean:
+-	rm -rf $(OBJDIR) $(TARGET)
++	rm -rf $(OBJDIR) $(TARGET) $(TESTBIN) $(TESTBIN)_asan $(MOCKBIN)
++
+diff --git a/README.md b/README.md
+index 252ad94..c119bcb 100644
+--- a/README.md
++++ b/README.md
+@@ -56,8 +56,31 @@ make clean
+ | `--vy <val>` | Y 方向速度 (int8) | 0 |
+ | `--vz <val>` | Z 方向速度 (int8) | 0 |
+ | `--period <ms>` | 控制帧发送周期 (ms) | 10 |
++| `--benchmark` | 采集每周期调度指标（唤醒延迟/工作耗时/周期偏差） | 关闭 |
++| `--metrics-csv <path>` | 指标 CSV 输出路径 | `performance_evaluation/results/03_periodic_timing.csv` |
++| `--cycles <n>` | 跑满 n 个周期后退出（0 = 不限制） | 0 |
++| `--abs-timer` | 改用绝对时间定时（`TIMER_ABSTIME`） | 关闭 |
+ | `-h` | 显示帮助 | - |
+ 
++## 测量与测试
++
++```bash
++make mock                    # 构建 loopback 模拟机器人服务端
++make test                    # 协议解析状态机测试（16 类用例）
++make test-asan               # ASan + UBSan 版本
++make cross-check             # ARM 交叉编译可用性检查
++
++# 10ms 周期调度测量（4 个场景 × 10000 周期）
++bash performance_evaluation/scripts/run_all_bench.sh 10000
++# 断线/退出时序测试
++bash performance_evaluation/scripts/run_disconnect_test.sh
++# 长期运行资源观测
++bash performance_evaluation/scripts/run_soak.sh 1800 5
++```
++
++详细测试口径、验收标准与实测结果见 `performance_evaluation/` 目录。
++
++
+ ## 协议说明
+ 
+ ### 控制下发帧（上位机 → 机器人）
+diff --git a/include/app_config.h b/include/app_config.h
+index 2a26ec1..f101f13 100644
+--- a/include/app_config.h
++++ b/include/app_config.h
+@@ -14,6 +14,9 @@
+ #define LOG_DIR               "logs"   /* CSV 日志输出目录 */
+ #define RECV_BUF_SIZE         4096     /* 单次 recv 的暂存区大小 */
+ 
++/* 周期指标 CSV 默认输出路径（--benchmark 打开且未指定 --metrics-csv 时使用） */
++#define DEFAULT_METRICS_CSV   "performance_evaluation/results/03_periodic_timing.csv"
++
+ /* 运行期配置：先填默认值，再被命令行参数覆盖 */
+ typedef struct {
+     char robot_ip[64];     /* 机器人 IP（点分十进制），带结尾 '\0' */
+@@ -24,6 +27,12 @@ typedef struct {
+     int  vy;
+     int  vz;
+     int  send_period_ms;   /* 控制帧发送周期，最小 1 ms */
++
++    /* ---- 以下为测量用可选开关，默认全部关闭，不影响默认通信行为 ---- */
++    int  benchmark;        /* 1 = 采集每周期调度指标（--benchmark） */
++    int  abs_timer;        /* 1 = 绝对时间定时 TIMER_ABSTIME（--abs-timer） */
++    int  max_cycles;       /* >0 = 跑满该周期数后退出；0 = 不限制（--cycles） */
++    char metrics_csv[256]; /* 指标 CSV 输出路径（--metrics-csv） */
+ } AppConfig;
+ 
+ /* 填默认值（会先 memset 清零） */
+diff --git a/src/app_config.c b/src/app_config.c
+index 014fe92..698b365 100644
+--- a/src/app_config.c
++++ b/src/app_config.c
+@@ -22,6 +22,12 @@ void app_config_set_defaults(AppConfig *cfg)
+     cfg->vy             = 0;
+     cfg->vz             = 0;
+     cfg->send_period_ms = DEFAULT_SEND_PERIOD_MS;
++
++    /* 测量开关默认关闭：默认运行路径与改动前完全一致 */
++    cfg->benchmark  = 0;
++    cfg->abs_timer  = 0;
++    cfg->max_cycles = 0;
++    strncpy(cfg->metrics_csv, DEFAULT_METRICS_CSV, sizeof(cfg->metrics_csv) - 1);
+ }
+ 
+ /* 打印最终生效的参数，方便确认命令行是否被正确解析 */
+@@ -38,5 +44,15 @@ void app_config_print(const AppConfig *cfg)
+     printf("  Vy         : %d\n", cfg->vy);
+     printf("  Vz         : %d\n", cfg->vz);
+     printf("  Period     : %d ms\n", cfg->send_period_ms);
++    printf("  Benchmark  : %s\n", cfg->benchmark ? "on" : "off");
++    if (cfg->benchmark) {
++        printf("  Timer mode : %s\n", cfg->abs_timer ? "absolute (TIMER_ABSTIME)"
++                                                    : "relative (clock_nanosleep)");
++        printf("  Max cycles : %s\n", cfg->max_cycles > 0 ? "(see below)" : "unlimited");
++        if (cfg->max_cycles > 0) {
++            printf("               %d\n", cfg->max_cycles);
++        }
++        printf("  Metrics CSV: %s\n", cfg->metrics_csv);
++    }
+     printf("============================================\n");
+ }
+diff --git a/src/main.c b/src/main.c
+index 3a0f6bc..e7c4ef1 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -23,11 +23,19 @@
+ #include <errno.h>
+ #include <time.h>
+ #include <getopt.h>
++#include <sys/socket.h>   /* shutdown()：join receiver 之前唤醒阻塞的 recv */
+ 
+ #include "app_config.h"
+ #include "robot_protocol.h"
+ #include "robot_tcp.h"
+ #include "logger.h"
++#include "metrics.h"
++
++/* timespec → 64 位纳秒（CLOCK_MONOTONIC 基准），仅用于周期测量 */
++static uint64_t ts_to_ns(const struct timespec *ts)
++{
++    return (uint64_t)ts->tv_sec * 1000000000ULL + (uint64_t)ts->tv_nsec;
++}
+ 
+ static volatile sig_atomic_t g_running = 1;
+ static int g_sockfd = -1;
+@@ -110,26 +118,115 @@ static void *sender_thread(void *arg)
+ 
+     long period_ns = (long)cfg->send_period_ms * 1000000L;
+ 
+-    printf("[SEND] Thread started, period = %d ms\n", cfg->send_period_ms);
++    /*
++     * 可选测量：只有 --benchmark 打开时才预分配采样数组并逐周期打点。
++     * 关闭时（默认）下面的 metrics_on 全为 0，不产生额外系统调用。
++     */
++    Metrics metrics;
++    int metrics_on = 0;
++    if (cfg->benchmark) {
++        size_t cap = (cfg->max_cycles > 0) ? (size_t)cfg->max_cycles
++                                           : (size_t)METRICS_DEFAULT_CAPACITY;
++        if (metrics_init(&metrics, cap, (uint64_t)period_ns, cfg->abs_timer) != 0) {
++            fprintf(stderr, "[METRICS] init failed, benchmark disabled.\n");
++        } else {
++            metrics_on = 1;
++        }
++    }
++
++    /*
++     * 绝对定时模式：以线程启动时刻为基准，为每个周期算出一个绝对目标时刻
++     * next_sched_ns，用 TIMER_ABSTIME 睡到该时刻。这样单周期的超时不会
++     * 累积到后续周期（相对睡眠会累积漂移）。该模式仅在 --abs-timer 时启用，
++     * 默认仍走原来的相对睡眠路径，保证默认行为不变。
++     */
++    uint64_t next_sched_ns = 0;
++    if (cfg->abs_timer) {
++        struct timespec now;
++        clock_gettime(CLOCK_MONOTONIC, &now);
++        next_sched_ns = ts_to_ns(&now);
++    }
++
++    printf("[SEND] Thread started, period = %d ms, timer = %s%s\n",
++           cfg->send_period_ms,
++           cfg->abs_timer ? "absolute" : "relative",
++           metrics_on ? ", metrics on" : "");
++
++    uint64_t cycle = 0;
+ 
+     while (g_running) {
++        struct timespec t0, t1;
++        int send_ret = 0;
++        int send_err = 0;
++
++        if (metrics_on) clock_gettime(CLOCK_MONOTONIC, &t0);
++
+         build_control_frame(frame, sizeof(frame),
+                             (uint8_t)cfg->enable, (uint8_t)cfg->mode,
+                             (int8_t)cfg->vx, (int8_t)cfg->vy, (int8_t)cfg->vz,
+                             seq);
+ 
+-        if (tcp_send_all(g_sockfd, frame, sizeof(frame)) != 0) {
++        int rc = tcp_send_all(g_sockfd, frame, sizeof(frame));
++        if (rc != 0) {
++            send_ret = -1;
++            send_err = errno;
++        }
++
++        if (metrics_on) {
++            clock_gettime(CLOCK_MONOTONIC, &t1);
++
++            CycleSample s;
++            memset(&s, 0, sizeof(s));
++            s.cycle_index  = cycle;
++            s.scheduled_ns = cfg->abs_timer ? next_sched_ns : 0;
++            s.start_ns     = ts_to_ns(&t0);
++            s.end_ns       = ts_to_ns(&t1);
++            s.send_ret     = send_ret;
++            s.send_errno   = send_err;
++            metrics_record(&metrics, &s);
++        }
++
++        if (rc != 0) {
+             fprintf(stderr, "[SEND] Failed, stopping.\n");
+             g_running = 0;
+             break;
+         }
+ 
+         seq++;   /* 回绕是预期行为：uint8_t 溢出后从 0 继续 */
++        cycle++;
+ 
+-        struct timespec req;
+-        req.tv_sec  = period_ns / 1000000000L;
+-        req.tv_nsec = period_ns % 1000000000L;
+-        clock_nanosleep(CLOCK_MONOTONIC, 0, &req, NULL);
++        /* --cycles N：跑满 N 个周期后主动收尾，便于自动化测试定量采集 */
++        if (cfg->max_cycles > 0 && cycle >= (uint64_t)cfg->max_cycles) {
++            printf("[SEND] Reached cycle limit (%d), stopping.\n", cfg->max_cycles);
++            g_running = 0;
++            break;
++        }
++
++        if (cfg->abs_timer) {
++            next_sched_ns += (uint64_t)period_ns;
++
++            struct timespec now;
++            clock_gettime(CLOCK_MONOTONIC, &now);
++            if (next_sched_ns > ts_to_ns(&now)) {
++                struct timespec target;
++                target.tv_sec  = (time_t)(next_sched_ns / 1000000000ULL);
++                target.tv_nsec = (long)(next_sched_ns % 1000000000ULL);
++                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &target, NULL);
++            }
++            /* 若已经超过目标时刻则不再睡，直接进入下一周期（该周期会记为超期） */
++        } else {
++            struct timespec req;
++            req.tv_sec  = period_ns / 1000000000L;
++            req.tv_nsec = period_ns % 1000000000L;
++            clock_nanosleep(CLOCK_MONOTONIC, 0, &req, NULL);
++        }
++    }
++
++    /* 采样由本线程独占写入，此处已无其他写者，直接导出即可，无需加锁 */
++    if (metrics_on) {
++        metrics_write_csv(&metrics, cfg->metrics_csv);
++        metrics_print_summary(&metrics);
++        metrics_free(&metrics);
+     }
+ 
+     printf("[SEND] Thread exiting.\n");
+@@ -181,6 +278,10 @@ static void print_usage(const char *prog)
+     printf("  --vy <val>    Velocity Y          (default: 0)\n");
+     printf("  --vz <val>    Velocity Z          (default: 0)\n");
+     printf("  --period <ms> Send period in ms   (default: %d)\n", DEFAULT_SEND_PERIOD_MS);
++    printf("  --benchmark   Collect per-cycle timing metrics (default: off)\n");
++    printf("  --metrics-csv <path>  Metrics CSV output (default: %s)\n", DEFAULT_METRICS_CSV);
++    printf("  --cycles <n>  Exit after n send cycles, 0 = unlimited (default: 0)\n");
++    printf("  --abs-timer   Use absolute CLOCK_MONOTONIC deadline instead of relative sleep\n");
+     printf("  -h            Show this help\n");
+ }
+ 
+@@ -195,10 +296,14 @@ int main(int argc, char *argv[])
+      * —— 因为 vx/vy/vz/period 都是"带参数、按名字区分"的同类选项。
+      */
+     struct option long_opts[] = {
+-        {"vx",     required_argument, 0, 0},
+-        {"vy",     required_argument, 0, 0},
+-        {"vz",     required_argument, 0, 0},
+-        {"period", required_argument, 0, 0},
++        {"vx",          required_argument, 0, 0},
++        {"vy",          required_argument, 0, 0},
++        {"vz",          required_argument, 0, 0},
++        {"period",      required_argument, 0, 0},
++        {"benchmark",   no_argument,       0, 0},
++        {"metrics-csv", required_argument, 0, 0},
++        {"cycles",      required_argument, 0, 0},
++        {"abs-timer",   no_argument,       0, 0},
+         {0, 0, 0, 0}
+     };
+ 
+@@ -230,6 +335,14 @@ int main(int argc, char *argv[])
+                 cfg.vz = atoi(optarg);
+             } else if (strcmp(long_opts[long_idx].name, "period") == 0) {
+                 cfg.send_period_ms = atoi(optarg);
++            } else if (strcmp(long_opts[long_idx].name, "benchmark") == 0) {
++                cfg.benchmark = 1;
++            } else if (strcmp(long_opts[long_idx].name, "abs-timer") == 0) {
++                cfg.abs_timer = 1;
++            } else if (strcmp(long_opts[long_idx].name, "metrics-csv") == 0) {
++                strncpy(cfg.metrics_csv, optarg, sizeof(cfg.metrics_csv) - 1);
++            } else if (strcmp(long_opts[long_idx].name, "cycles") == 0) {
++                cfg.max_cycles = atoi(optarg);
+             }
+             break;
+         case 'h':
+@@ -249,6 +362,14 @@ int main(int argc, char *argv[])
+         fprintf(stderr, "Send period must be at least 1 ms\n");
+         return 1;
+     }
++    if (cfg.max_cycles < 0) {
++        fprintf(stderr, "Cycle limit must be >= 0\n");
++        return 1;
++    }
++    /* 绝对定时模式只有配合指标采集才有意义，单独开启不做拦截，仅提示 */
++    if (cfg.abs_timer && !cfg.benchmark) {
++        fprintf(stderr, "Note: --abs-timer without --benchmark has no metrics output.\n");
++    }
+ 
+     app_config_print(&cfg);
+ 
+@@ -298,12 +419,18 @@ int main(int argc, char *argv[])
+      *   receiver —— 阻塞在 recv 上，靠信号打断 EINTR 后检查标志退出，
+      *               或者对端关闭连接使 recv 返回 0 而退出。
+      *
+-     * 注意：Ctrl+C 的信号是投递给进程的，由内核挑一个未屏蔽它的线程处理，
+-     * 不一定落在 receiver 上。如果信号被主线程或 sender 收走，而出数据的那一端
+-     * 一直静默，receiver 会继续阻塞在 recv 上，这里的 join 就会挂住 ——
+-     * 真正稳妥的做法是在 join 之前先 shutdown(g_sockfd) 唤醒它，或给 recv 加超时。
++     * 退出时序加固（本次修复项）：
++     *   Ctrl+C 的信号由内核挑一个未屏蔽它的线程处理，不保证落在 receiver 上。
++     *   若信号被主线程或 sender 收走，而对端此时一直静默，receiver 会继续阻塞在
++     *   recv 上，后面的 join 就会永久挂住（只能 kill -9）。因此在 join(receiver)
++     *   之前先 shutdown(g_sockfd, SHUT_RDWR)：内核会让阻塞中的 recv 立即返回 0，
++     *   receiver 随即检查 g_running 退出。shutdown 只影响本端读写，不改变协议行为。
+      */
+     pthread_join(sender_tid, NULL);
++
++    if (g_sockfd >= 0) {
++        shutdown(g_sockfd, SHUT_RDWR);
++    }
+     pthread_join(receiver_tid, NULL);
+ 
+ cleanup:

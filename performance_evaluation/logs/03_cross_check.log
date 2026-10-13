@@ -1,0 +1,9 @@
+# make cross-check (ARM toolchain compile verification)
+# date: 2026-10-11T13:31:00+08:00
+# toolchain: arm-linux-gnueabihf-gcc (Linaro GCC 4.9-2017.01) 4.9.4
+
+arm-linux-gnueabihf-gcc -std=c11 -Wall -Wextra -O2 -pthread -D_POSIX_C_SOURCE=200112L -Iinclude -c -o /tmp/cross_check_main.o src/main.c
+arm-linux-gnueabihf-gcc -std=c11 -Wall -Wextra -O2 -pthread -D_POSIX_C_SOURCE=200112L -Iinclude -c -o /tmp/cross_check_metrics.o src/metrics.c
+arm-linux-gnueabihf-gcc -std=c11 -Wall -Wextra -O2 -pthread -D_POSIX_C_SOURCE=200112L -Iinclude -c -o /tmp/cross_check_proto.o src/robot_protocol.c
+cross-check OK (ARM objects built)
+EXIT_CODE=0
