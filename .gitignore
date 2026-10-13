@@ -1,6 +1,9 @@
 # 统一构建输出目录（PC 与 ARM 两套产物）
 output/
 
+# make test 每次运行都会重建的解析器测试结果（板端实测 board_*.csv 不忽略）
+performance_evaluation/results/03_parser_tests.csv
+
 # 兼容早期的根目录产物位置
 robot_linux_app
 mock_robot
