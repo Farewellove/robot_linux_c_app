@@ -313,21 +313,24 @@ bash performance_evaluation/scripts/board_bench_pc.sh 500 &
     --accept-timeout 300 \
     --csv performance_evaluation/results/board_mock_server.csv
 
-# 板端串口：记录环境 + 运行
+# 板端串口：记录环境 + 运行（产物统一进 log/robot_linux_c_app/）
 cd /lib/modules/4.1.15
 uname -a; nproc; head -25 /proc/cpuinfo
+mkdir -p log/robot_linux_c_app
 ./robot_linux_app -i 192.168.1.66 -p 19090 -e 1 -m 1 --period 10 \
-    --benchmark --cycles 6000 --metrics-csv board_timing.csv
+    --benchmark --cycles 6000 \
+    --metrics-csv log/robot_linux_c_app/board_timing.csv
 
 # PC：复算（CSV 就在 NFS 目录里，无需 scp）
 python3 performance_evaluation/scripts/analyze_timing.py \
-    /home/why/zdyz/nfs/rootfs/lib/modules/4.1.15/board_timing.csv --label imx6ull
+    /home/why/zdyz/nfs/rootfs/lib/modules/4.1.15/log/robot_linux_c_app/board_timing.csv \
+    --label imx6ull
 ```
 
 板端注意：
-- **CSV 直接写进 `/lib/modules/4.1.15/`（NFS 共享目录），PC 侧无需 scp 即可读取**；
-  这与该目录下既有的 `frame_timing.csv`、`gesture_sessions.csv` 做法一致；
-  若不想污染该目录，也可写 `/tmp/`，但需要 scp 回传；
+- **产物统一写进 `log/robot_linux_c_app/`（NFS 共享目录），PC 侧无需 scp 即可读取**；
+  不再直接散落在 `/lib/modules/4.1.15/`（该目录是多个项目共用的工作目录）；
+  换根目录用 `ROBOT_LOG_ROOT` 或 `--log-dir`；
 - 板端一般**没有 python3**，`analyze_*.py` 在主机侧运行；
 - `--cycles 6000`（60 秒）占用约 `6000 × 40 B = 240 KB` 内存，i.MX6ULL 完全够用；
 - 若要看核心间差异可用 `taskset -c 0` 固定到 CPU0（**注意这会改变调度条件，需在报告中说明**）。
@@ -341,7 +344,8 @@ python3 performance_evaluation/scripts/analyze_timing.py \
 | ARM 交叉编译（`make arm` / `make deploy`） | ✅ 已通过，产物已部署到 NFS |
 | ABI / glibc 兼容性核对 | ✅ 已核对（见 5.2） |
 | 跨机模式验证（PC 监听 0.0.0.0 ↔ 通过 192.168.1.66 连接） | ✅ 已实测通过 |
-| **板端实测数据** | ❌ **NOT_RUN**（尚未在板上实际运行采集） |
+| **板端周期调度实测数据** | ✅ **已实测**（`board_periodic_timing_20261013_211746.csv`，4741 周期） |
+| **真实传感器数据实测** | ✅ **已实测**（`board_sensor_imu_20261013_223355.csv`，2741 条 IMU + 274 条 AP） |
 
 板端数据采集完成后，需在 `performance_report.md` 的汇总表中**新增板端列**，
 并把每一项从"PC 模拟值"更新为"板端实测值"，同时保留 PC 值作为对照。
