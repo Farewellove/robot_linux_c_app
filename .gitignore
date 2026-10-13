@@ -1,9 +1,18 @@
-# Compiled binary
+# 统一构建输出目录（PC 与 ARM 两套产物）
+output/
+
+# 兼容早期的根目录产物位置
 robot_linux_app
+mock_robot
+test_protocol
+test_protocol_asan
 
 # Object files
 obj/
 *.o
+
+# Runtime CSV logs written by the application
+logs/
 
 # Claude Code local settings
 .claude/
