@@ -63,7 +63,7 @@
 | `g_running` | `src/main.c:40` | 信号处理函数 / 主线程 / 两工作线程 | `volatile sig_atomic_t` | 仅作布尔退出标志，读写原子，安全 |
 | `g_sockfd` | `src/main.c`（static int） | sender(send)/receiver(recv)/main(shutdown,close) | 无锁 | 内核 socket 层对同一 fd 的 send/recv 是安全的；close 发生在两个线程 join 之后，无并发 |
 | `g_log_fp` | `src/main.c`（static FILE*） | 仅 receiver 线程回调写 | 实际由 `g_print_mutex` 串行化 | 只有 receiver 写，不存在双写；mutex 是冗余但无害的保险 |
-| `stdout`（日志打印） | 系统 | receiver 回调 / **sender 线程的 `printf` / 主线程 `printf`** | 只有 `on_parsed_frame` 加 `g_print_mutex` | ⚠️ **sender/main 的 printf 未加锁**，实测出现输出交错（见 `logs/disconnect_fin_app.log` 中 `[CAR] ... vyrecv: connection closed by peer`）。仅影响可读性，不影响协议与数据 |
+| `stdout`（日志打印） | 系统 | receiver 回调 / **sender 线程的 `printf` / 主线程 `printf`** | 只有 `on_parsed_frame` 加 `g_print_mutex` | ⚠️ **sender/main 的 printf 未加锁**，实测出现输出交错（断线测试日志里出现过 `[CAR] ... vyrecv: connection closed by peer` 这种半截行）。仅影响可读性，不影响协议与数据 |
 | `cfg (AppConfig)` | `main` 栈 | sender 线程只读 | 无（只读） | join 前 main 栈有效，安全 |
 | `RecvBuffer rb` | receiver 线程栈 | receiver 独占 | 无 | 线程局部，安全 |
 | `Metrics`（本轮新增） | sender 线程栈 + 堆数组 | 仅 sender 写，join 后 main 不读 | 单写者 | 无数据竞争；导出发生在发送线程自身，join 之前 |
@@ -297,7 +297,7 @@ AP3216C  (I2C) ─┘                                        │
 | 姿态 | accel 见 ±0.9 g；gyro 峰值 ±192 °/s（采集过程中板子被转动） |
 
 数据与结论汇总：`performance_evaluation/results/measurement_summary.md`；
-完整记录见 `docs/真实传感器接入与实测记录.md`。（原始逐帧 CSV 不入库）
+（原始逐帧 CSV 不入库，只保留结论。）
 
 ---
 

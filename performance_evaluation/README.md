@@ -45,7 +45,7 @@
 | `03_periodic_timing_{idle,traffic,load}_relative.csv` | 逐周期原始时间戳（各 10000 行） |
 | `03_periodic_timing_traffic_absolute.csv` | 绝对时间定时模式逐周期原始时间戳（含 scheduled_ns） |
 | `03_resource_usage_*.csv` | 各场景的 RSS / 线程数 / fd / 上下文切换采样 |
-| `03_resource_usage_soak.csv` | 30 分钟长期运行资源采样（360 点，RSS/线程数/fd 变化量均为 0） |
+| ~~`03_resource_usage_soak.csv`~~ | 已清理：30 分钟 soak 结论（360 点，RSS/线程数/fd 变化量均为 0）已并入 `performance_report.md` |
 | `03_mock_server_*.csv` | 模拟服务端统计（收到控制帧数 / 坏帧数 / seq 跳变数） |
 | `03_disconnect_tests.csv` | 断线检测结果 |
 | `03_sigint_hang_*.txt` | 退出时序修复前后的 A/B 结果 |
@@ -61,7 +61,7 @@
 | `04_analyze_resource.log` | 资源 CSV 的独立复算输出 |
 | `05_git_diff.patch` | 基线 commit 与本次工作区完整 diff（证据留存） |
 | `analyze_timing.log` | 周期 CSV 的独立复算输出（与程序内置汇总逐项一致） |
-| `bench_all.log` / `soak_run.log` | 场景运行全过程日志 |
+| ~~`bench_all.log` / `soak_run.log`~~ | 已清理：运行日志不入库，需要时用 `scripts/` 里的脚本重跑 |
 | `app_*.log` / `mock_*.log` | 各场景的被测程序与模拟服务端原始日志 |
 
 ## 一键复现

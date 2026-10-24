@@ -201,7 +201,7 @@ bash performance_evaluation/scripts/run_soak.sh 1800 5     # 30 分钟（报告�
 |---|---|---|---|
 | ARM 交叉编译 + 部署到 NFS | ✅ **已完成** | 工具链与 rootfs glibc 一致，产物可直接运行 | `make arm && make deploy`（详见 `USAGE.md` 第 5 节） |
 | 跨机模式连通性（PC 监听 0.0.0.0 ↔ 经 192.168.1.66 连接） | ✅ **已完成** | — | 见 `README.md` 板级实测流程 |
-| **板端周期调度实测数据采集** | ✅ **已完成**（2026-10-13） | i.MX6ULL 4.1.15 单核；结论见 `results/measurement_summary.md` | 复算：`python3 performance_evaluation/scripts/analyze_timing.py <csv> --label board_imx6ull --period-ns 10000000` |
+| **板端周期调度实测数据采集** | ✅ **已完成**（2026-10-13） | i.MX6ULL 4.1.15 单核；4741 周期，偏差 mean 194.6 μs / p99 263 μs | 复算：`python3 performance_evaluation/scripts/analyze_timing.py <csv> --label board_imx6ull --period-ns 10000000` |
 | **真实传感器数据链路实测** | ✅ **已完成**（2026-10-13） | 板端 `sensor_robot` 读 ICM20608/AP3216C → TCP → PC `robot_linux_app`；2741 条 IMU + 274 条 AP 零丢帧 | `docs/真实传感器接入与实测记录.md`；数据 `results/board_sensor_*_20261013_223355.csv` |
 | 真实机器人/执行器闭环测试 | **NOT_RUN** | 无真实机器人，默认 IP `192.168.1.103` 无法确认可达 | `output/pc/robot_linux_app -i <真实IP> -p <真实端口> -e 1 -m 1 --benchmark --cycles 6000 --metrics-csv results/real_robot_timing.csv`，同时用示波器/机器人侧日志测端到端执行延迟 |
 | 真实网线拔插 / 断电断线检测 | **NOT_RUN** | 尚未执行 | 板端运行中直接拔网线，观察是否在 `TCP_KEEPIDLE` 默认 7200s 内报错（预期**不会**及时报错，这是已知能力边界） |

@@ -235,7 +235,7 @@ make test-asan -> 无任何 ASan/UBSan 报告；detect_leaks=1 无泄漏报告
 
 **(b) 长期运行观测（30 分钟，5 s 采样）**
 
-见 `results/03_resource_usage_soak.csv` 与 `logs/soak_run.log`。
+原始数据由 `run_soak.sh` 产出（原始 CSV 不入库），结论直接列在下面。
 采样项：`VmRSS`、线程数、`/proc/<pid>/fd` 计数、自愿/非自愿上下文切换。
 
 命令 `bash performance_evaluation/scripts/run_soak.sh 1800 5`（持续 1800 s，每 5 s 一次，共 360 个采样点）：
@@ -275,13 +275,13 @@ make test-asan -> 无任何 ASan/UBSan 报告；detect_leaks=1 无泄漏报告
 | 项目 | 状态 | 原因 |
 |---|---|---|
 | 真实机器人闭环控制测试 | **NOT_RUN** | 无真实机器人（无执行器）；默认 IP `192.168.1.103` 可达性无法确认 |
-| ~~ARM 开发板（i.MX6ULL）板端实测~~ | ✅ **已于 2026-10-13 完成** | 4741 周期：周期偏差 mean 194.6 μs / p99 263 μs / max 489 μs，工作耗时 mean 88.2 μs / p99 143 μs，发送错误 0；环境 i.MX6ULL / 4.1.15 / 单核 ARMv7（明细见 `results/measurement_summary.md`） |
-| ~~真实传感器数据链路实测~~ | ✅ **已于 2026-10-13 完成** | ICM20608/AP3216C 经 IIO sysfs 采真实数据推给上位机：2741+274 帧零丢帧、IMU 100.03 Hz、周期 p99 10.375 ms；见 `docs/真实传感器接入与实测记录.md` |
+| ~~ARM 开发板（i.MX6ULL）板端实测~~ | ✅ **已于 2026-10-13 完成** | 4741 周期：周期偏差 mean 194.6 μs / p99 263 μs / max 489 μs，工作耗时 mean 88.2 μs / p99 143 μs，发送错误 0；环境 i.MX6ULL / 4.1.15 / 单核 ARMv7 |
+| ~~真实传感器数据链路实测~~ | ✅ **已于 2026-10-13 完成** | ICM20608/AP3216C 经 IIO sysfs 采真实数据推给上位机：2741+274 帧零丢帧、IMU 100.03 Hz、周期 p99 10.375 ms（记录已随项目归档） |
 | 真实网线拔插断线检测 | **NOT_RUN** | 无物理链路可操作 |
 | Valgrind 全量 memcheck | **NOT_RUN** | 未安装 Valgrind；已用 ASan 覆盖协议解析路径 |
 | 硬实时能力（PREEMPT_RT / SCHED_FIFO） | **NOT_RUN** | 会改变原程序运行语义，需独立评估；本次不做 |
 
-板端可直接执行的命令见 `test_plan.md` 第 6 节。
+板端命令：`cd /lib/modules/4.1.15 && ./board_bench_board.sh 192.168.1.66 6000`，PC 侧先跑 `board_bench_pc.sh 6000`。
 
 ---
 

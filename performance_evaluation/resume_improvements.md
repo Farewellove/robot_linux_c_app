@@ -84,7 +84,7 @@
   坏帧 0、序列号跳变 0**；
   记录 **VmRSS 全程恒定 2016 kB（变化量 0）**、**线程数恒为 3**（主 + 发送 + 接收）、
   **文件描述符数恒为 19**，未观察到任何增长。
-  - 证据：`results/03_resource_usage_soak.csv`、`logs/soak_run.log`
+  - 证据：30 分钟 soak 观测（RSS 恒 2016 kB、线程数与 fd 数不变、变化量 0）；原始 CSV 与日志已清理，结论保留在本文件与 `performance_report.md`
   - 命令：`bash performance_evaluation/scripts/run_soak.sh 1800 5`
   - **诚实边界：只写"未观察到增长"，不写"无内存泄漏"**（有限时长观察不能替代 Valgrind 全量检查）
 
@@ -160,5 +160,5 @@
 | 40000/40000 控制帧合法 | `results/03_mock_server_*.csv` |
 | 退出时延 0.102 s（修复前挂死） | `results/03_sigint_hang_*.txt` |
 | 断线检测 2.0 s 内退出 | `results/03_disconnect_tests.csv` |
-| RSS / fd / 线程数趋势（30 分钟，变化量 0） | `results/03_resource_usage_soak.csv` |
+| RSS / fd / 线程数趋势（30 分钟，变化量 0） | 原始 CSV 已清理，结论见上一条 |
 | 交叉编译可用 | `make cross-check` |
