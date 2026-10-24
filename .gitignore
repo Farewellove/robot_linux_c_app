@@ -14,6 +14,17 @@ test_protocol_asan
 obj/
 *.o
 
+# 板端实测原始 CSV / txt / log：体积大且可重新采集，不入库。
+# 结论统一归档在 performance_evaluation/results/measurement_summary.md。
+performance_evaluation/results/board_periodic_timing_*.csv
+performance_evaluation/results/board_sensor_*.csv
+performance_evaluation/results/board_env_*.txt
+performance_evaluation/results/board_mock_server_*.csv
+performance_evaluation/logs/board_mock_*.log
+
+# 源码打包产物（由脚本生成，非手工维护）
+source_bundle.md
+
 # Runtime logs written by the application.
 # 运行期日志统一在 log/<项目名>/ 下（见 include/app_config.h 的 LOG_ROOT/PROJECT_NAME）。
 # 只忽略仓库根目录的 log/ 与旧位置 logs/，不能写成 log/ 或 logs/ —— 那会连带忽略

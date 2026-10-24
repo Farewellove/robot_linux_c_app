@@ -296,8 +296,8 @@ AP3216C  (I2C) ─┘                                        │
 | 温度 | 均值 34.61 ℃，全程漂移 -0.02 ℃ |
 | 姿态 | accel 见 ±0.9 g；gyro 峰值 ±192 °/s（采集过程中板子被转动） |
 
-数据：`performance_evaluation/results/board_sensor_imu_20261013_223355.csv`、
-`board_sensor_server_20261013_223355.csv`；完整记录见 `docs/真实传感器接入与实测记录.md`。
+数据与结论汇总：`performance_evaluation/results/measurement_summary.md`；
+完整记录见 `docs/真实传感器接入与实测记录.md`。（原始逐帧 CSV 不入库）
 
 ---
 

@@ -275,7 +275,7 @@ make test-asan -> 无任何 ASan/UBSan 报告；detect_leaks=1 无泄漏报告
 | 项目 | 状态 | 原因 |
 |---|---|---|
 | 真实机器人闭环控制测试 | **NOT_RUN** | 无真实机器人（无执行器）；默认 IP `192.168.1.103` 可达性无法确认 |
-| ~~ARM 开发板（i.MX6ULL）板端实测~~ | ✅ **已于 2026-10-13 完成** | `board_periodic_timing_20261013_211746.csv`（4741 周期）：周期偏差 mean 194.6 μs / p99 263 μs / max 489 μs，工作耗时 mean 88.2 μs / p99 143 μs，发送错误 0；环境 `board_env_20261013_211746.txt`（i.MX6ULL，4.1.15，单核 ARMv7） |
+| ~~ARM 开发板（i.MX6ULL）板端实测~~ | ✅ **已于 2026-10-13 完成** | 4741 周期：周期偏差 mean 194.6 μs / p99 263 μs / max 489 μs，工作耗时 mean 88.2 μs / p99 143 μs，发送错误 0；环境 i.MX6ULL / 4.1.15 / 单核 ARMv7（明细见 `results/measurement_summary.md`） |
 | ~~真实传感器数据链路实测~~ | ✅ **已于 2026-10-13 完成** | ICM20608/AP3216C 经 IIO sysfs 采真实数据推给上位机：2741+274 帧零丢帧、IMU 100.03 Hz、周期 p99 10.375 ms；见 `docs/真实传感器接入与实测记录.md` |
 | 真实网线拔插断线检测 | **NOT_RUN** | 无物理链路可操作 |
 | Valgrind 全量 memcheck | **NOT_RUN** | 未安装 Valgrind；已用 ASan 覆盖协议解析路径 |

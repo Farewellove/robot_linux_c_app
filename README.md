@@ -103,8 +103,8 @@ cd /lib/modules/4.1.15 && ./load_drivers.sh
 板端 `./sensor_robot -p 19090 --period 10 --imu-every 1 --ap-every 10`，PC 侧 `robot_linux_app -i 192.168.1.55`
 接收，持续 27.4 秒。原始数据在 `performance_evaluation/results/`：
 
-- `board_sensor_imu_20261013_223355.csv` —— PC 收到的逐帧日志（2741 条 IMU + 274 条 AP）
-- `board_sensor_server_20261013_223355.csv` —— 板端 `sensor_robot` 的运行统计
+- 结论与复现命令：`performance_evaluation/results/measurement_summary.md`
+  （原始逐帧 CSV / 板端统计不入库，按该文件的命令可重新采集）
 
 | 项 | 结果 |
 |---|---|

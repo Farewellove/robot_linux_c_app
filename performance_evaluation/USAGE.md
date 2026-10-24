@@ -344,8 +344,8 @@ python3 performance_evaluation/scripts/analyze_timing.py \
 | ARM 交叉编译（`make arm` / `make deploy`） | ✅ 已通过，产物已部署到 NFS |
 | ABI / glibc 兼容性核对 | ✅ 已核对（见 5.2） |
 | 跨机模式验证（PC 监听 0.0.0.0 ↔ 通过 192.168.1.66 连接） | ✅ 已实测通过 |
-| **板端周期调度实测数据** | ✅ **已实测**（`board_periodic_timing_20261013_211746.csv`，4741 周期） |
-| **真实传感器数据实测** | ✅ **已实测**（`board_sensor_imu_20261013_223355.csv`，2741 条 IMU + 274 条 AP） |
+| **板端周期调度实测** | ✅ **已实测**（4741 周期，结论见 `results/measurement_summary.md`） |
+| **真实传感器数据实测** | ✅ **已实测**（2741 条 IMU + 274 条 AP，结论见 `results/measurement_summary.md`） |
 
 板端数据采集完成后，需在 `performance_report.md` 的汇总表中**新增板端列**，
 并把每一项从"PC 模拟值"更新为"板端实测值"，同时保留 PC 值作为对照。

@@ -1,5 +1,0 @@
-[MOCK] listening on 0.0.0.0:19090 (period=10ms frames=100000000 silent=0)
-[MOCK] 提示: 监听所有网卡，开发板可通过本机 IP 连接（跨机测试必需）
-[MOCK] client connected from 192.168.1.55:53818
-[MOCK] client closed connection
-[MOCK] summary: tx_status_frames=4845 rx_ctrl_frames=4741 rx_bad=0 rx_seq_gap=0 first_seq=0
